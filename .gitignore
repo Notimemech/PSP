@@ -1,0 +1,25 @@
+# Dependencies & build
+node_modules/
+dist/
+coverage/
+*.tsbuildinfo
+
+# Env (giữ lại .env.example)
+.env
+.env.*
+!.env.example
+
+# Claude Code: cấu hình cá nhân
+.claude/settings.local.json
+CLAUDE.local.md
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
