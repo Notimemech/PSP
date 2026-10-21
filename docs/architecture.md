@@ -156,7 +156,7 @@ Quy tắc:
 - Mọi chuyển khác trả `409 INVALID_STATE`. Mọi lần chuyển ghi `payment_status_history` (`from_status`, `to_status`, `source`: `api`/`job`/`admin`; `ipn` dành cho giai đoạn sau).
 - Sai lệch số tiền/mã (FR-CB-03) là cờ `needs_review`, **không** phải trạng thái.
 - Refund thất bại không đổi trạng thái payment và phát `refund.failed`. Trạng thái refund: `PENDING`, `SUCCEEDED`, `FAILED` là **bổ sung** của tài liệu này (SRS chỉ nêu `MANUAL_REQUIRED`, mức S, FR-RF-04); `MANUAL_REQUIRED` thêm khi làm FR-RF-04.
-- FR-PM-04: một `(client_id, order_id)` chỉ có tối đa một payment đã thanh toán, bằng partial unique index trong Postgres — phạm vi điều kiện của index (chờ chốt – xem Câu hỏi mở C5).
+- FR-PM-04: một `(client_id, order_id)` chỉ có tối đa một payment đã thanh toán, bằng partial unique index trong Postgres — điều kiện `WHERE paid_at IS NOT NULL`, phủ SUCCEEDED, PARTIALLY_REFUNDED, REFUNDED (đã chốt C5, mục 9).
 
 ## 5. Multi-tenant
 
@@ -165,7 +165,7 @@ Quy tắc:
 - `order_id` chỉ unique trong phạm vi một client; mã gửi VNPay `vnp_TxnRef` do PGS sinh, unique toàn hệ thống (FR-MT-02).
 - `idempotency_keys` có PK `(client_id, key)`.
 - Mặc định mọi client dùng chung một merchant VNPay (`provider_config_id = null`); merchant riêng là mức S.
-- Rate limit theo `client_id` đã xác thực (NFR-SEC-05). Nơi lưu bộ đếm (chờ chốt – C13): đề xuất bộ nhớ trong process cho MVP một instance, nhưng phương án này lệch NFR-REL-03 (stateless, nhiều instance). Mã lỗi khi vượt giới hạn (chờ chốt – xem Câu hỏi mở C3).
+- Rate limit theo `client_id` đã xác thực (NFR-SEC-05). Nơi lưu bộ đếm (đã chốt C13, mục 9): bộ nhớ trong process, key theo `client_id`; mô hình triển khai là **một instance dùng chung cho nhiều client system**, nên bộ đếm theo client trong process đủ để một client không làm nghẽn client khác. Khi scale ngang (NFR-REL-03) mới chuyển bộ đếm sang Postgres; giữ interface `RateLimitStore` để đổi được. Mã lỗi khi vượt giới hạn (chờ chốt – xem Câu hỏi mở C3).
 
 ## 6. Mô hình dữ liệu (tóm tắt)
 
@@ -177,7 +177,7 @@ Theo SRS mục 5. Mọi bảng có `created_at`, `updated_at`. Không có bảng
 | `providers` | code, name, capabilities (JSON), status | Bật/tắt không cần deploy |
 | `provider_configs` | id, provider_code, environment, credentials (mã hóa), status | MVP: VNPay sandbox |
 | `client_providers` | client_id, provider_code, is_enabled | PK (client_id, provider_code) |
-| `payments` | id, client_id, order_id, amount (integer), currency, status, provider_code, provider_txn_ref, description, return_url, metadata, expires_at, paid_at, needs_review | `provider_txn_ref` unique toàn hệ thống; unique (client_id, order_id) cho payment đã thanh toán (phạm vi chờ chốt – xem Câu hỏi mở C5); `needs_review` là cột bổ sung theo quyết định 2026-10-21 |
+| `payments` | id, client_id, order_id, amount (integer), currency, status, provider_code, provider_txn_ref, description, return_url, metadata, expires_at, paid_at, needs_review | `provider_txn_ref` unique toàn hệ thống; partial unique (client_id, order_id) `WHERE paid_at IS NOT NULL` (C5); `needs_review` là cột bổ sung theo quyết định 2026-10-21 |
 | `transactions` | id, payment_id, provider_code, provider_txn_id, amount, status, raw_request, raw_response | unique (provider_code, provider_txn_id); raw không chứa secret |
 | `refunds` | id, payment_id, amount, reason, status, provider_refund_id | Tổng refund ≤ amount; giá trị `status` xem mục 4 |
 | `provider_callbacks` | id, provider_code, payload, signature_valid, processed, received_at | MVP lưu return URL; IPN dùng sau |
@@ -191,7 +191,7 @@ Theo SRS mục 5. Mọi bảng có `created_at`, `updated_at`. Không có bảng
 
 | Kênh | Cơ chế |
 | --- | --- |
-| Client → Public API | API key + HMAC (NFR-SEC-01). Header `X-Client-Id`, `X-Timestamp`, `X-Signature`; chuỗi ký, đơn vị timestamp, encoding: theo [`.claude/rules/api-design.md`](../.claude/rules/api-design.md) mục "Xác thực HMAC" (tóm tắt: `METHOD` viết hoa + `req.originalUrl` gồm `/api/v1` và query + timestamp Unix giây + raw body, hex chữ thường). Lệch > 5 phút → `401 INVALID_SIGNATURE`; so sánh bằng `crypto.timingSafeEqual`. Header mang API key (chờ chốt – xem Câu hỏi mở C1). `Idempotency-Key` bắt buộc với mọi POST của client; thiếu → `400 VALIDATION_ERROR` (diễn giải SRS 4.4) |
+| Client → Public API | API key + HMAC (NFR-SEC-01). Header `X-Client-Id`, `X-Timestamp`, `X-Signature`; chuỗi ký, đơn vị timestamp, encoding: theo [`.claude/rules/api-design.md`](../.claude/rules/api-design.md) mục "Xác thực HMAC" (tóm tắt: `METHOD` viết hoa + `req.originalUrl` gồm `/api/v1` và query + timestamp Unix giây + raw body, hex chữ thường). Lệch > 5 phút → `401 INVALID_SIGNATURE`; so sánh bằng `crypto.timingSafeEqual`. Không có header API key riêng (đã chốt C1, tối giản): `X-Client-Id` là định danh công khai, bí mật duy nhất là secret HMAC. `Idempotency-Key` bắt buộc với mọi POST của client; thiếu → `400 VALIDATION_ERROR` (diễn giải SRS 4.4) |
 | Admin → `/api/v1/admin/*` | Header `X-Admin-Key` so sánh timing-safe với env `ADMIN_API_KEY`, chỉ dùng cho local/sandbox. `ADMIN_API_KEY` **bắt buộc**: app fail-fast khi khởi động nếu thiếu hoặc ngắn hơn 32 ký tự. Mã lỗi khi sai khóa (chờ chốt – xem Câu hỏi mở C3); POST admin có cần `Idempotency-Key` (chờ chốt – xem Câu hỏi mở C8) |
 | VNPay → return URL | Chữ ký `vnp_SecureHash` (verify bằng thư viện `vnpay`, khóa `VNP_HASH_SECRET`) + queryDr |
 | PGS → webhook client | HMAC-SHA256 bằng secret của client, kèm timestamp và `event_id`; định dạng cụ thể (chờ chốt – xem Câu hỏi mở C2) |
@@ -208,6 +208,14 @@ Thay đổi code thuộc auth, payment, callback, webhook, refund hoặc cấu h
 4. **Thư viện được phép** giới hạn theo danh sách trong [`CLAUDE.md`](../CLAUDE.md). Hệ quả: log JSON tự viết (có mask), retry/timeout/circuit breaker tự viết (thay cho opossum trong NFR-REL-04), không dùng helmet.
 5. **SRS đổi tên thành `docs/srs.md`**.
 
+User chốt ngày 2026-10-22:
+
+6. **C1 — tối giản:** client gửi `X-Client-Id` + `X-Timestamp` + `X-Signature`; không có header API key riêng. `client_id` đóng vai trò "API key" công khai, secret HMAC là bí mật duy nhất. Hệ quả: cột `api_key_hash` trong SRS mục 5 không cần dùng (xem ghi chú cho Phase 2 — cần user xác nhận bỏ cột hay giữ).
+7. **C5 — có:** FR-PM-04 dùng partial unique index `(client_id, order_id) WHERE paid_at IS NOT NULL`, phủ SUCCEEDED, PARTIALLY_REFUNDED, REFUNDED.
+8. **C13:** rate limit phù hợp mô hình một instance dùng chung cho nhiều hệ thống: bộ đếm trong process, key theo `client_id`, giới hạn `RATE_LIMIT_PER_SECOND`; đặt sau interface để chuyển sang Postgres khi scale ngang.
+9. **Thư viện dev TypeScript được phép:** `tsx`, `@types/node`, `@types/express`, `@types/supertest`, `typescript-eslint`, `@eslint/js`, `globals`, `@vitest/coverage-v8`.
+10. **Line ending LF** qua `.gitattributes`.
+
 Các điểm chốt trong vòng rà soát Phase 1 (không phải câu trả lời của user ngày 2026-10-21): chuỗi ký HMAC (theo `.claude/rules/api-design.md`); `ADMIN_API_KEY` bắt buộc, app fail-fast khi khởi động nếu thiếu hoặc ngắn hơn 32 ký tự (mục 7); trạng thái refund bổ sung (mục 4); tên trường Prisma `subscribedEvents` (mục 6).
 
 ## 10. Câu hỏi mở
@@ -216,11 +224,11 @@ Các điểm dưới đây **chờ user chốt**. Phương án đề xuất ch�
 
 | # | Câu hỏi | Phương án đề xuất |
 | --- | --- | --- |
-| C1 | API key gửi bằng header nào? SRS 4.2 chỉ có `X-Client-Id`. | (a) Thêm header `X-Api-Key`, PGS tra client theo SHA-256 của key; hoặc (b) gộp: `X-Client-Id` là id công khai, API key chính là `client_id` (bí mật thật sự chỉ là secret HMAC). |
+| C1 | ~~API key gửi bằng header nào?~~ | **Đã chốt 2026-10-22 (mục 9.6):** phương án (b), tối giản. |
 | C2 | Định dạng chữ ký webhook gửi tới client. | Header `X-PGS-Event-Id`, `X-PGS-Timestamp`, `X-PGS-Signature = hex(HMAC-SHA256(secret, timestamp + "." + rawBody))`. |
 | C3 | Mã lỗi bổ sung ngoài SRS 4.4. | `429 RATE_LIMITED`, `500 INTERNAL_ERROR`, `401 UNAUTHORIZED` cho admin, `409 IDEMPOTENCY_CONFLICT` với `details.reason = "in_progress"` khi request trùng key đang xử lý. |
 | C4 | Finding Medium/Low đã CONFIRMED có được để lại (chưa sửa) không? | Được, nếu user chấp nhận rõ ràng và được ghi vào `tests/security/open-findings.json`; High/Critical không bao giờ được để lại. |
-| C5 | Phạm vi unique của FR-PM-04. | Partial unique index `(client_id, order_id) WHERE paid_at IS NOT NULL`, phủ cả SUCCEEDED, PARTIALLY_REFUNDED, REFUNDED. |
+| C5 | ~~Phạm vi unique của FR-PM-04.~~ | **Đã chốt 2026-10-22 (mục 9.7):** `WHERE paid_at IS NOT NULL`. |
 | C6 | Payment có `needs_review` xử lý thế nào? | Giữ `PENDING`; job queryDr/expire bỏ qua; không bắn webhook; admin xử lý tay. |
 | C7 | Có thêm sự kiện `payment.cancelled` không? | Không ở MVP. |
 | C8 | `POST /api/v1/admin/*` có cần `Idempotency-Key` không? | Miễn. |
@@ -228,6 +236,6 @@ Các điểm dưới đây **chờ user chốt**. Phương án đề xuất ch�
 | C10 | Giới hạn `return_url`. | Chỉ `https:` (cho phép `http://localhost` khi chưa production); hoặc allowlist domain theo từng client. |
 | C11 | Mã VNPay nào dẫn tới FAILED (vd `24` = người dùng hủy)? | FAILED chỉ khi queryDr trả kết quả thất bại xác định; mọi trường hợp khác giữ PENDING (job queryDr/expire xử lý tiếp). |
 | C12 | Outbox kích hoạt pg-boss thế nào? | (a) Gọi `send` của pg-boss trong cùng transaction DB với việc ghi `webhook_events`; hoặc (b) job định kỳ quét `webhook_events` đang chờ gửi rồi tạo job. |
-| C13 | Rate limit lưu bộ đếm ở đâu? (bộ nhớ process lệch NFR-REL-03) | Bộ nhớ trong process, chạy một instance ở MVP; khi scale ngang thì chuyển bộ đếm sang Postgres. |
+| C13 | ~~Rate limit lưu bộ đếm ở đâu?~~ | **Đã chốt 2026-10-22 (mục 9.8):** trong process theo `client_id`, một instance dùng chung. |
 
 Xem thêm: [ADR 0001 — Express + PostgreSQL + pg-boss](adr/0001-express-postgres-pgboss.md), [ADR 0002 — Sandbox không IPN](adr/0002-sandbox-khong-ipn.md).

@@ -71,7 +71,7 @@ Kết thúc bằng câu trả lời ngắn cho Claude chính: đường dẫn b�
 
 # Công thức gọi API local có ký HMAC
 
-Chuỗi ký đã chốt, xem `.claude/rules/api-design.md` mục "Xác thực HMAC": `X-Signature = hex chữ thường(HMAC-SHA256(secret, METHOD + path + timestamp + rawBody))`; `METHOD` viết hoa; `path` = `req.originalUrl` (gồm `/api/v1` và query string); `timestamp` = `X-Timestamp`, Unix giây; `rawBody` là body thô (chuỗi rỗng nếu không có). Middleware lệch khỏi quy ước này thì bản thân sự lệch đó là điểm cần kiểm tra. Header chứa API key: chờ chốt, xem Câu hỏi mở C1 trong `docs/architecture.md`.
+Chuỗi ký đã chốt, xem `.claude/rules/api-design.md` mục "Xác thực HMAC": `X-Signature = hex chữ thường(HMAC-SHA256(secret, METHOD + path + timestamp + rawBody))`; `METHOD` viết hoa; `path` = `req.originalUrl` (gồm `/api/v1` và query string); `timestamp` = `X-Timestamp`, Unix giây; `rawBody` là body thô (chuỗi rỗng nếu không có). Middleware lệch khỏi quy ước này thì bản thân sự lệch đó là điểm cần kiểm tra. Không có header API key riêng (C1 đã chốt: `X-Client-Id` + HMAC).
 
 ```bash
 BASE=http://localhost:3000
@@ -108,7 +108,7 @@ Mỗi mục: điều cần kiểm tra → cách kiểm tra (grep/file/request). 
 - Chữ ký có phủ `method + path + timestamp + body` thật không (đổi path `/payments/A` sang `/payments/B` với cùng chữ ký phải fail). Body dùng để verify phải là **raw body** (grep `express.json\(|verify:|rawBody`), không phải `JSON.stringify(req.body)` (khác thứ tự/khoảng trắng → có thể bypass hoặc từ chối nhầm).
 - API key/secret lưu thế nào: `api_key_hash` SHA-256, `secret_encrypted` AES-256-GCM (grep `createCipheriv|aes-256-gcm|getAuthTag|setAuthTag`); IV ngẫu nhiên 12 byte mỗi lần mã hóa (grep `randomBytes\(12\)`), có verify auth tag.
 - Admin: `ADMIN_API_KEY` là **bắt buộc**; app phải fail-fast khi khởi động nếu thiếu hoặc ngắn hơn 32 ký tự (đọc schema env trong `src/config/`). Không được có nhánh "rỗng == rỗng" hay admin API mở khi thiếu khóa. Header sai/thiếu → 401 (mã lỗi admin: chờ chốt, xem Câu hỏi mở C3).
-- API key: lưu `api_key_hash` (SHA-256), tra theo hash; header mang API key chờ chốt (Câu hỏi mở C1) — kiểm tra theo cách implementation đã chọn và đối chiếu với câu trả lời của user nếu đã có.
+- C1 đã chốt (tối giản): xác thực = `X-Client-Id` + chữ ký HMAC bằng secret của client; không có header API key riêng. Kiểm tra client bị vô hiệu hóa/không tồn tại → 401, không lộ khác biệt giữa hai trường hợp.
 
 **API3:2023 Broken Object Property Level Authorization** — mass assignment, lộ trường nhạy cảm.
 - Grep: `\.\.\.req\.body|data:\s*req\.body|Object\.assign\(.*req\.body` trong controller/service/repository.
@@ -120,7 +120,7 @@ Mỗi mục: điều cần kiểm tra → cách kiểm tra (grep/file/request). 
 - Đọc `src/middlewares/rate-limit.ts`: theo client (NFR-SEC-05, ~100 req/s), áp dụng trước xử lý nặng; return URL (không có HMAC) có giới hạn theo IP không.
 - `express.json({ limit })` có giới hạn; `metadata`, `description` có giới hạn độ dài; phân trang có `limit` tối đa.
 - Timeout gọi VNPay (NFR-PER-02) và gọi webhook client (10 giây) có thực sự đặt không (grep `AbortController|signal|timeout`).
-- Request: vòng lặp 150 request/giây ký hợp lệ → phải có 429 (mã lỗi `RATE_LIMITED` chờ chốt, Câu hỏi mở C3). Nơi lưu bộ đếm rate limit (chờ chốt – C13 trong `docs/architecture.md`): nếu implementation dùng bộ nhớ process thì ghi nhận giới hạn nhiều instance vào "Nghi vấn chưa xác minh", không ghi là finding cho tới khi C13 được chốt.
+- Request: vòng lặp 150 request/giây ký hợp lệ → phải có 429 (mã lỗi `RATE_LIMITED` chờ chốt, Câu hỏi mở C3). Rate limit (C13 đã chốt): bộ đếm trong process theo `client_id` là thiết kế đúng cho mô hình một instance dùng chung — không ghi việc không chia sẻ giữa nhiều instance là finding. Kiểm tra: key theo `client_id` đã xác thực (không theo header chưa xác thực), một client vượt giới hạn không ảnh hưởng client khác, bộ đếm không tăng vô hạn bộ nhớ.
 
 **API5:2023 Broken Function Level Authorization** — admin API.
 - Mọi route `/api/v1/admin/*` phải qua `admin-auth`; grep `router\.(get|post|put|patch|delete)` trong `src/routes/admin*` và kiểm tra thứ tự mount trong `src/app.ts`.
@@ -128,7 +128,7 @@ Mỗi mục: điều cần kiểm tra → cách kiểm tra (grep/file/request). 
 - Request: `curl -i $BASE/api/v1/admin/clients` (không header, header sai, header của client) → 401.
 
 **API6:2023 Unrestricted Access to Sensitive Business Flows** — luồng tiền.
-- Tạo payment hàng loạt cho cùng `order_id`; refund nhiều lần vượt tổng; cancel payment đã SUCCEEDED; FR-PM-04 (một `order_id` chỉ có một payment SUCCEEDED — có ràng buộc DB/partial unique index không, grep migrations `CREATE UNIQUE INDEX .* WHERE`; phạm vi điều kiện `WHERE` chờ chốt, Câu hỏi mở C5).
+- Tạo payment hàng loạt cho cùng `order_id`; refund nhiều lần vượt tổng; cancel payment đã SUCCEEDED; FR-PM-04 (một `order_id` chỉ có một payment SUCCEEDED — có ràng buộc DB/partial unique index không, grep migrations `CREATE UNIQUE INDEX .* WHERE`; điều kiện phải là `WHERE paid_at IS NOT NULL` theo C5 đã chốt).
 - Refund: tổng refund SUCCEEDED + PENDING ≤ amount, kiểm tra trong transaction có lock (grep `FOR UPDATE|pg_advisory_xact_lock|\$transaction`).
 
 **API7:2023 Server Side Request Forgery (SSRF)** — `return_url`, `webhook_url`.

@@ -47,7 +47,7 @@ docs/                               # srs.md, architecture.md, adr/, security/re
 
 ## Quyết định đã chốt (2026-10-21)
 
-- Secret client lưu **mã hóa AES-256-GCM** (cột `secret_encrypted`, khóa từ env `ENCRYPTION_KEY`), không lưu hash, vì cần secret gốc để tính HMAC. API key chỉ lưu hash SHA-256.
+- Secret client lưu **mã hóa AES-256-GCM** (cột `secret_encrypted`, khóa từ env `ENCRYPTION_KEY`), không lưu hash, vì cần secret gốc để tính HMAC.
 - Payment có 7 trạng thái: `PENDING`, `SUCCEEDED`, `FAILED`, `EXPIRED`, `CANCELLED`, `PARTIALLY_REFUNDED`, `REFUNDED`.
   - `FAILED`/`EXPIRED`/`CANCELLED` là trạng thái cuối. Trước khi thanh toán, chỉ `PENDING` còn đổi được.
   - Lệch số tiền/mã giao dịch (FR-CB-03) → bật cờ `needs_review`, không tạo trạng thái mới.
@@ -58,7 +58,9 @@ docs/                               # srs.md, architecture.md, adr/, security/re
   - Runtime: `express`, `@prisma/client`/`prisma`, `pg-boss`, `vnpay`, `zod`.
   - Dev: `typescript`, `vitest`, `supertest`, `eslint`, `prettier` (+ types/tooling tối thiểu).
   - KHÔNG dùng pino, opossum, helmet: logger JSON (có mask) và retry/timeout/circuit đều tự viết trong `src/lib/`.
+  - Dev TypeScript (chốt 2026-10-22): `tsx`, `@types/node`, `@types/express`, `@types/supertest`, `typescript-eslint`, `@eslint/js`, `globals`, `@vitest/coverage-v8`.
 - **Không cài thư viện mới khi chưa hỏi user.**
+- Chốt 2026-10-22: xác thực client = `X-Client-Id` + HMAC, không có header API key riêng (C1); FR-PM-04 unique `WHERE paid_at IS NOT NULL` (C5); rate limit trong process theo `client_id`, một instance dùng chung (C13); line ending LF.
 
 Chốt trong vòng rà soát Phase 1:
 
@@ -72,7 +74,7 @@ Chốt trong vòng rà soát Phase 1:
 - Luôn verify chữ ký mọi dữ liệu VNPay trả về (`verifyReturnUrl`; IPN khi có).
 - So sánh chữ ký/khóa bằng `crypto.timingSafeEqual` (kiểm tra độ dài trước), không dùng `===`.
 - Không cập nhật trạng thái payment chỉ dựa vào tham số redirect: phải gọi queryDr để xác nhận, rồi đối chiếu số tiền và `vnp_TxnRef`.
-- Mọi query phải lọc theo `client_id` lấy từ API key/HMAC đã xác thực; không tin `client_id` trong body/query.
+- Mọi query phải lọc theo `client_id` lấy từ `X-Client-Id` đã xác thực HMAC; không tin `client_id` trong body/query.
 - Số tiền là integer theo đơn vị nhỏ nhất (VND: đồng). Không dùng float.
 - Mọi POST của client bắt buộc có `Idempotency-Key` (lưu 24h; cùng key + body → trả kết quả cũ; khác body → 409). POST `/admin/*`: chờ user chốt.
 - Chuỗi ký HMAC = `METHOD` viết hoa + path (`req.originalUrl`, gồm `/api/v1` và query) + timestamp (Unix giây) + raw body; chữ ký là hex chữ thường. Chi tiết: `.claude/rules/api-design.md`.

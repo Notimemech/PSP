@@ -48,7 +48,7 @@ Mọi lỗi trả về theo cấu trúc: `{ "error": { "code": "...", "message":
 
 ## Xác thực HMAC (client → PGS)
 
-- Header: `X-Client-Id`, `X-Timestamp`, `X-Signature`. Cách gửi API key (header nào, có tách khỏi `X-Client-Id` không) (chờ user chốt, xem docs/architecture.md#10-câu-hỏi-mở).
+- Header: `X-Client-Id`, `X-Timestamp`, `X-Signature`. Không có header API key riêng (C1 đã chốt, tối giản): `X-Client-Id` định danh client, secret HMAC là bí mật duy nhất.
 - Chuỗi ký = `method + path + timestamp + body` (nối trực tiếp, không dấu phân cách):
   - `method`: viết hoa (`POST`).
   - `path`: `req.originalUrl`, gồm `/api/v1` và query string (ví dụ `/api/v1/payments?status=PENDING`).

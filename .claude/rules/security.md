@@ -15,7 +15,7 @@ Mục có ghi "(chờ user chốt, xem docs/architecture.md#10-câu-hỏi-mở)"
   - `/api/v1/health`: không xác thực.
   - `/api/v1/callbacks/*`: xác thực bằng chữ ký VNPay (NFR-SEC-03).
   - `/api/v1/admin/*`: xác thực bằng `X-Admin-Key`, không dùng HMAC.
-- [ ] Cách gửi API key (chờ user chốt, xem docs/architecture.md#10-câu-hỏi-mở).
+- [ ] Xác thực client = `X-Client-Id` + HMAC; không có header API key riêng (C1 đã chốt).
 - [ ] Chữ ký tính trên raw body; so sánh bằng `crypto.timingSafeEqual` sau khi kiểm tra độ dài.
 - [ ] Chặn replay: timestamp lệch > `HMAC_MAX_SKEW_SECONDS` (300s) → 401.
 - [ ] Client có `status` vô hiệu hóa → 401.
@@ -25,7 +25,7 @@ Mục có ghi "(chờ user chốt, xem docs/architecture.md#10-câu-hỏi-mở)"
 ## NFR-SEC-02: Lưu secret
 
 - [ ] Secret client (`secret_encrypted`) và credentials provider mã hóa AES-256-GCM (IV ngẫu nhiên 12 byte mỗi lần, lưu kèm auth tag), khóa từ `ENCRYPTION_KEY` (32 byte).
-- [ ] API key chỉ lưu `api_key_hash` (SHA-256).
+- [ ] Không lưu API key riêng (C1); cột `api_key_hash` của SRS mục 5 chờ user xác nhận bỏ hay giữ.
 - [ ] Không có secret/khóa trong source code, seed, test fixture hay migration (`prisma/**`).
 - [ ] Config parse bằng zod khi khởi động; thiếu hoặc sai biến bắt buộc thì dừng app.
 
@@ -46,7 +46,7 @@ Mục có ghi "(chờ user chốt, xem docs/architecture.md#10-câu-hỏi-mở)"
 
 ## NFR-SEC-05: Rate limit
 
-- [ ] Rate limit theo `client_id` (`RATE_LIMIT_PER_SECOND`, mặc định 100); middleware tự viết. Mã lỗi khi vượt (chờ user chốt, xem docs/architecture.md#10-câu-hỏi-mở).
+- [ ] Rate limit theo `client_id` (`RATE_LIMIT_PER_SECOND`, mặc định 100); middleware tự viết, bộ đếm trong process theo `client_id` (C13 đã chốt: một instance dùng chung), một client vượt không ảnh hưởng client khác, bộ đếm phải được dọn để không phình bộ nhớ. Mã lỗi khi vượt (chờ user chốt, xem docs/architecture.md#10-câu-hỏi-mở).
 
 ## NFR-REL-01: Outbox
 
@@ -57,7 +57,7 @@ Mục có ghi "(chờ user chốt, xem docs/architecture.md#10-câu-hỏi-mở)"
 - [ ] Idempotency cho mọi POST client (`Idempotency-Key`, PK `(client_id, key)`, so `request_hash`); xử lý đúng khi gửi trùng key song song.
 - [ ] Return URL/queryDr/job xử lý idempotent: cùng kết quả nhận nhiều lần chỉ cập nhật một lần (FR-CB-04).
 - [ ] Lock theo payment khi đổi trạng thái (`SELECT ... FOR UPDATE` hoặc `pg_advisory_xact_lock`); kiểm tra trạng thái nguồn hợp lệ trong lock.
-- [ ] Một `order_id` không có hơn một payment SUCCEEDED (FR-PM-04); phạm vi unique (chờ user chốt, xem docs/architecture.md#10-câu-hỏi-mở). `provider_txn_ref` unique toàn hệ thống.
+- [ ] Một `order_id` không có hơn một payment SUCCEEDED (FR-PM-04); partial unique index `(client_id, order_id) WHERE paid_at IS NOT NULL` (C5 đã chốt). `provider_txn_ref` unique toàn hệ thống.
 - [ ] Refund: tổng hoàn ≤ số đã trả, kiểm tra trong lock → `REFUND_EXCEEDS_AMOUNT`.
 
 ## NFR-OBS-01 / NFR-OBS-03: Log và audit
