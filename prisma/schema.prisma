@@ -1,5 +1,11 @@
-// Prisma schema của PGS. Các model nghiệp vụ (SRS mục 5) được thêm ở bước sau.
+// Prisma schema của PGS (SRS mục 5, docs/architecture.md mục 6).
+// Quy ước: bảng/cột snake_case qua @@map/@map, field camelCase. ID dạng "<tiền tố>_<ULID>" (src/lib/id.ts).
 // Quyết định: không có cột api_key_hash (C1 tối giản, user chốt 2026-10-22).
+// Dữ liệu tài chính (payments, transactions, refunds, status history) dùng onDelete: Restrict.
+//
+// Ràng buộc Prisma không biểu diễn được, viết SQL tay trong migration init:
+// - FR-PM-04 / C5: partial unique index payments (client_id, order_id) WHERE paid_at IS NOT NULL.
+// - Seed provider "vnpay".
 
 generator client {
   provider = "prisma-client-js"
@@ -8,4 +14,291 @@ generator client {
 datasource db {
   provider = "postgresql"
   url      = env("DATABASE_URL")
+}
+
+enum ClientStatus {
+  ACTIVE
+  DISABLED
+}
+
+enum ProviderStatus {
+  ENABLED
+  DISABLED
+}
+
+enum ProviderEnvironment {
+  SANDBOX
+  PRODUCTION
+}
+
+enum PaymentStatus {
+  PENDING
+  SUCCEEDED
+  FAILED
+  EXPIRED
+  CANCELLED
+  PARTIALLY_REFUNDED
+  REFUNDED
+}
+
+enum TransactionStatus {
+  PENDING
+  SUCCEEDED
+  FAILED
+}
+
+enum RefundStatus {
+  PENDING
+  SUCCEEDED
+  FAILED
+  MANUAL_REQUIRED
+}
+
+enum WebhookEventStatus {
+  PENDING
+  DELIVERED
+  FAILED
+}
+
+enum StatusSource {
+  API
+  IPN
+  JOB
+  ADMIN
+}
+
+model Client {
+  id               String       @id
+  name             String
+  /// AES-256-GCM, định dạng v1.<iv>.<tag>.<ct> (src/lib/crypto.ts). Không bao giờ trả ra API.
+  secretEncrypted  String       @map("secret_encrypted")
+  webhookUrl       String?      @map("webhook_url")
+  /// Loại event client muốn nhận. Đặt tên subscribedEvents để không trùng bảng webhook_events.
+  subscribedEvents String[]     @default([]) @map("webhook_events")
+  status           ClientStatus @default(ACTIVE)
+  /// Null = dùng merchant VNPay chung (FR-MT-03).
+  providerConfigId String?      @map("provider_config_id")
+  createdAt        DateTime     @default(now()) @map("created_at")
+  updatedAt        DateTime     @updatedAt @map("updated_at")
+
+  providerConfig  ProviderConfig?  @relation(fields: [providerConfigId], references: [id], onDelete: Restrict)
+  providers       ClientProvider[]
+  payments        Payment[]
+  webhookEvents   WebhookEvent[]
+  idempotencyKeys IdempotencyKey[]
+
+  @@map("clients")
+}
+
+model Provider {
+  code         String         @id
+  name         String
+  capabilities Json
+  status       ProviderStatus @default(ENABLED)
+  createdAt    DateTime       @default(now()) @map("created_at")
+  updatedAt    DateTime       @updatedAt @map("updated_at")
+
+  configs             ProviderConfig[]
+  clients             ClientProvider[]
+  payments            Payment[]
+  transactions        Transaction[]
+  callbacks           ProviderCallback[]
+  reconciliationItems ReconciliationItem[]
+
+  @@map("providers")
+}
+
+model ProviderConfig {
+  id                   String              @id
+  providerCode         String              @map("provider_code")
+  environment          ProviderEnvironment
+  /// Thông tin kết nối provider, mã hóa AES-256-GCM.
+  credentialsEncrypted String              @map("credentials_encrypted")
+  status               ProviderStatus      @default(ENABLED)
+  createdAt            DateTime            @default(now()) @map("created_at")
+  updatedAt            DateTime            @updatedAt @map("updated_at")
+
+  provider Provider @relation(fields: [providerCode], references: [code], onDelete: Restrict)
+  clients  Client[]
+
+  @@index([providerCode])
+  @@map("provider_configs")
+}
+
+model ClientProvider {
+  clientId     String   @map("client_id")
+  providerCode String   @map("provider_code")
+  isEnabled    Boolean  @default(true) @map("is_enabled")
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  client   Client   @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  provider Provider @relation(fields: [providerCode], references: [code], onDelete: Restrict)
+
+  @@id([clientId, providerCode])
+  @@map("client_providers")
+}
+
+model Payment {
+  id             String        @id
+  clientId       String        @map("client_id")
+  orderId        String        @map("order_id")
+  /// Đơn vị nhỏ nhất của tiền tệ (VND: đồng).
+  amount         Int
+  currency       String        @default("VND")
+  status         PaymentStatus @default(PENDING)
+  providerCode   String        @map("provider_code")
+  /// Mã gửi provider (vnp_TxnRef), do PGS sinh, unique toàn hệ thống (FR-MT-02).
+  providerTxnRef String        @unique @map("provider_txn_ref")
+  description    String
+  returnUrl      String        @map("return_url")
+  /// Lưu và trả lại nguyên văn (FR-SB-01).
+  metadata       Json?
+  expiresAt      DateTime      @map("expires_at")
+  paidAt         DateTime?     @map("paid_at")
+  /// Kết quả provider lệch dữ liệu PGS hoặc không xác định (FR-CB-03, C6): xử lý tay.
+  needsReview    Boolean       @default(false) @map("needs_review")
+  createdAt      DateTime      @default(now()) @map("created_at")
+  updatedAt      DateTime      @updatedAt @map("updated_at")
+
+  client        Client                 @relation(fields: [clientId], references: [id], onDelete: Restrict)
+  provider      Provider               @relation(fields: [providerCode], references: [code], onDelete: Restrict)
+  transactions  Transaction[]
+  refunds       Refund[]
+  callbacks     ProviderCallback[]
+  webhookEvents WebhookEvent[]
+  statusHistory PaymentStatusHistory[]
+
+  // Partial unique (client_id, order_id) WHERE paid_at IS NOT NULL: SQL tay trong migration init.
+  @@index([clientId, orderId])
+  @@map("payments")
+}
+
+model Transaction {
+  id            String            @id
+  paymentId     String            @map("payment_id")
+  providerCode  String            @map("provider_code")
+  /// Mã giao dịch phía provider (VNPay: vnp_TransactionNo).
+  providerTxnId String?           @map("provider_txn_id")
+  amount        Int
+  status        TransactionStatus @default(PENDING)
+  /// Tham số gửi provider, không chứa chữ ký/secret.
+  rawRequest    Json?             @map("raw_request")
+  /// Response đã verify của provider, không chứa chữ ký/secret.
+  rawResponse   Json?             @map("raw_response")
+  createdAt     DateTime          @default(now()) @map("created_at")
+  updatedAt     DateTime          @updatedAt @map("updated_at")
+
+  payment  Payment  @relation(fields: [paymentId], references: [id], onDelete: Restrict)
+  provider Provider @relation(fields: [providerCode], references: [code], onDelete: Restrict)
+
+  @@unique([providerCode, providerTxnId])
+  @@index([paymentId])
+  @@map("transactions")
+}
+
+model Refund {
+  id               String       @id
+  paymentId        String       @map("payment_id")
+  amount           Int
+  reason           String?
+  status           RefundStatus @default(PENDING)
+  providerRefundId String?      @map("provider_refund_id")
+  createdAt        DateTime     @default(now()) @map("created_at")
+  updatedAt        DateTime     @updatedAt @map("updated_at")
+
+  payment Payment @relation(fields: [paymentId], references: [id], onDelete: Restrict)
+
+  @@index([paymentId])
+  @@map("refunds")
+}
+
+model ProviderCallback {
+  id             String   @id
+  providerCode   String   @map("provider_code")
+  /// Null khi chữ ký sai hoặc không tìm thấy payment.
+  paymentId      String?  @map("payment_id")
+  /// Tham số nhận được, đã bỏ chữ ký.
+  payload        Json
+  signatureValid Boolean  @map("signature_valid")
+  processed      Boolean  @default(false)
+  receivedAt     DateTime @default(now()) @map("received_at")
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  provider Provider @relation(fields: [providerCode], references: [code], onDelete: Restrict)
+  payment  Payment? @relation(fields: [paymentId], references: [id], onDelete: Restrict)
+
+  @@index([paymentId])
+  @@map("provider_callbacks")
+}
+
+model WebhookEvent {
+  /// = event_id gửi cho client (FR-WH-05).
+  id           String             @id
+  clientId     String             @map("client_id")
+  paymentId    String?            @map("payment_id")
+  type         String
+  payload      Json
+  status       WebhookEventStatus @default(PENDING)
+  attempts     Int                @default(0)
+  nextRetryAt  DateTime?          @map("next_retry_at")
+  lastResponse Json?              @map("last_response")
+  createdAt    DateTime           @default(now()) @map("created_at")
+  updatedAt    DateTime           @updatedAt @map("updated_at")
+
+  client  Client   @relation(fields: [clientId], references: [id], onDelete: Restrict)
+  payment Payment? @relation(fields: [paymentId], references: [id], onDelete: Restrict)
+
+  @@index([status, nextRetryAt])
+  @@index([paymentId])
+  @@map("webhook_events")
+}
+
+model IdempotencyKey {
+  clientId       String   @map("client_id")
+  key            String
+  requestHash    String   @map("request_hash")
+  responseStatus Int?     @map("response_status")
+  responseBody   Json?    @map("response_body")
+  expiresAt      DateTime @map("expires_at")
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  client Client @relation(fields: [clientId], references: [id], onDelete: Cascade)
+
+  @@id([clientId, key])
+  @@index([expiresAt])
+  @@map("idempotency_keys")
+}
+
+model PaymentStatusHistory {
+  id         String         @id
+  paymentId  String         @map("payment_id")
+  fromStatus PaymentStatus? @map("from_status")
+  toStatus   PaymentStatus  @map("to_status")
+  source     StatusSource
+  createdAt  DateTime       @default(now()) @map("created_at")
+  updatedAt  DateTime       @updatedAt @map("updated_at")
+
+  payment Payment @relation(fields: [paymentId], references: [id], onDelete: Restrict)
+
+  @@index([paymentId])
+  @@map("payment_status_history")
+}
+
+model ReconciliationItem {
+  id            String   @id
+  date          DateTime @db.Date
+  providerCode  String   @map("provider_code")
+  providerTxnId String   @map("provider_txn_id")
+  issueType     String   @map("issue_type")
+  resolved      Boolean  @default(false)
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
+
+  provider Provider @relation(fields: [providerCode], references: [code], onDelete: Restrict)
+
+  @@index([date, providerCode])
+  @@map("reconciliation_items")
 }
