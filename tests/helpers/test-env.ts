@@ -1,6 +1,6 @@
 // Giá trị giả cố định cho test (không đọc .env). Chỉ DATABASE_URL_TEST được lấy từ shell.
 export const TEST_DATABASE_URL =
-  process.env.DATABASE_URL_TEST ?? 'postgresql://pgs:change_me@localhost:5432/pgs_test';
+  process.env.DATABASE_URL_TEST ?? 'postgresql://pgs:change_me@localhost:5433/pgs_test';
 
 export const TEST_ENV: Record<string, string> = {
   NODE_ENV: 'test',

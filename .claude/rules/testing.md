@@ -13,7 +13,7 @@ paths:
 ## Môi trường test
 
 - Vitest setup đặt **giá trị giả cố định** cho `VNP_HASH_SECRET`, `VNP_TMN_CODE`, `ENCRYPTION_KEY`, `ADMIN_API_KEY` (≥ 32 ký tự) và các tham số vận hành. Không đọc `.env`.
-- Chỉ `DATABASE_URL_TEST` được đọc từ biến môi trường của shell. Nếu chưa đặt, setup dùng mặc định `postgresql://pgs:change_me@localhost:5432/pgs_test` (khớp `DATABASE_URL_TEST` trong `.env.example`; docker compose ở Phase 2 phải dùng cùng user/password `pgs`/`change_me`).
+- Chỉ `DATABASE_URL_TEST` được đọc từ biến môi trường của shell. Nếu chưa đặt, setup dùng mặc định `postgresql://pgs:change_me@localhost:5433/pgs_test` (khớp `DATABASE_URL_TEST` trong `.env.example`; docker compose ở Phase 2 phải dùng cùng user/password `pgs`/`change_me`).
 - `globalSetup` chạy `prisma migrate deploy` trên DB test trước khi chạy test.
 
 ## Cơ sở dữ liệu

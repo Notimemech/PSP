@@ -43,7 +43,7 @@ docs/                               # srs.md, architecture.md, adr/, security/re
 - Lint: `npm run lint` · Typecheck: `npm run typecheck` · Format: `npm run format`
 - Migrate: `npx prisma migrate dev` (dev), `npx prisma migrate deploy`, `npx prisma generate`
 - Seed client: `npm run seed:client -- --name <tên>`
-- Docker (cổng DB host đổi bằng `PGS_DB_HOST_PORT` nếu 5432 bị chiếm): `docker compose up -d postgres` (chỉ DB), `docker compose up --build` (cả stack), `docker compose down`
+- Docker (Postgres ra host ở cổng **5433**, đổi bằng `PGS_DB_HOST_PORT`): `docker compose up -d postgres` (chỉ DB), `docker compose up --build` (cả stack), `docker compose down`
 
 ## Quyết định đã chốt (2026-10-21)
 

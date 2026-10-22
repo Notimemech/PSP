@@ -92,8 +92,8 @@ Dockerfile, docker-compose.yml
 - **Express 5**: lỗi ném trong handler async được chuyển thẳng tới error handler.
 - **ESM** (`"type": "module"`): import nội bộ phải có đuôi `.js`.
 - **Cổng Postgres trên host**:
-  - Mặc định 5432, đổi được qua `PGS_DB_HOST_PORT`.
-  - Nếu máy đã có PostgreSQL khác chiếm 5432, đặt `PGS_DB_HOST_PORT=5433`, đồng thời trỏ `DATABASE_URL` / `DATABASE_URL_TEST` sang cổng đó.
+  - Mặc định **5433** (user chốt 2026-10-22), vì máy dev đã có PostgreSQL Windows chiếm 5432. Đổi được qua `PGS_DB_HOST_PORT`.
+  - Trong mạng compose, `api` vẫn nối `postgres:5432`; chỉ cổng phía host là 5433. Đổi cổng host thì sửa cả `DATABASE_URL` / `DATABASE_URL_TEST`.
 - **`npm audit` báo 3 lỗ hổng high** ở `deepmerge-ts`, đi qua `@prisma/config`.
   - Đây là tooling của Prisma CLI: nó chỉ đọc config của chính dự án, không nhận input từ bên ngoài.
   - Bản sửa là lên Prisma 7, tức đúng phương án đã không chọn.

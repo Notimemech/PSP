@@ -20,7 +20,7 @@ docker compose up --build
 
 Kiểm tra: `curl http://localhost:3000/api/v1/health`
 
-Chạy test: `npm test` (cần Postgres). Test dùng DB riêng từ `DATABASE_URL_TEST`; nếu chưa đặt thì mặc định là `postgresql://pgs:change_me@localhost:5432/pgs_test`.
+Chạy test: `npm test` (cần Postgres). Test dùng DB riêng từ `DATABASE_URL_TEST`; nếu chưa đặt thì mặc định là `postgresql://pgs:change_me@localhost:5433/pgs_test`.
 
 Lưu ý: hook bảo vệ của Claude Code chặn mọi lệnh đụng tới `.env` (kể cả `cp` ở trên), nên bạn tự tạo `.env` bằng tay.
 

@@ -8,8 +8,9 @@ services:
       POSTGRES_PASSWORD: change_me
       POSTGRES_DB: pgs
     ports:
-      # Đổi cổng host nếu máy đã có PostgreSQL khác chiếm 5432 (vd PGS_DB_HOST_PORT=5433).
-      - '${PGS_DB_HOST_PORT:-5432}:5432'
+      # Cổng host mặc định 5433 để không đụng PostgreSQL cài sẵn trên máy (thường chiếm 5432).
+      # Đổi bằng PGS_DB_HOST_PORT; nhớ sửa DATABASE_URL / DATABASE_URL_TEST theo.
+      - '${PGS_DB_HOST_PORT:-5433}:5432'
     volumes:
       - pgdata:/var/lib/postgresql/data
       - ./docker/postgres:/docker-entrypoint-initdb.d:ro
