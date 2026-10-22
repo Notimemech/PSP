@@ -10,7 +10,7 @@ Tài liệu thêm: `docs/architecture.md`, `docs/codebase-design.md` (bản đ�
 
 - Node.js 22 LTS, TypeScript strict, Express.js (không dùng NestJS)
 - PostgreSQL + Prisma; hàng đợi job/webhook bằng pg-boss (không dùng Redis/RabbitMQ)
-- VNPay sandbox qua thư viện `vnpay` (lehuygiang28/vnpay). Host: `sandbox.vnpayment.vn`
+- VNPay sandbox qua thư viện `vnpay` (lehuygiang28/vnpay, đã cài 2.5.x). Host: `sandbox.vnpayment.vn`
 - Validate env/input bằng zod; test bằng Vitest + Supertest; ESLint + Prettier
 - Chạy local bằng Docker Compose (`api`, `postgres`)
 
@@ -25,9 +25,9 @@ Tài liệu thêm: `docs/architecture.md`, `docs/codebase-design.md` (bản đ�
 ```
 src/
   app.ts, server.ts, config/        # env parse bằng zod
-  routes/ controllers/ services/ repositories/
+  routes/ controllers/ services/ repositories/  # controllers/client-context.ts: getClientId(req) (tạm thời, Q2)
   middlewares/                      # hmac-auth, admin-auth, idempotency, correlation-id, rate-limit, error-handler
-  providers/                        # IPaymentProvider.ts, vnpay/VnpayAdapter.ts, registry.ts
+  providers/                        # IPaymentProvider.ts, vnpay/VnpayAdapter.ts, registry.ts, index.ts (dựng registry từ Config)
   jobs/                             # webhook-dispatch, querydr-pending, expire-payments
   lib/                              # crypto, logger, errors, money
   cli/                              # seed-client.ts
@@ -65,6 +65,8 @@ docs/                               # srs.md, architecture.md, adr/, security/re
 Chốt trong vòng rà soát Phase 1:
 
 - `ADMIN_API_KEY` **bắt buộc**: app fail-fast khi khởi động nếu thiếu hoặc ngắn hơn 32 ký tự.
+
+**TẠM THỜI (Q2, 2026-10-22):** `X-Client-Id` CHƯA được xác thực (chưa có middleware HMAC, idempotency, rate limit); chỉ dùng local/sandbox. Lấy client_id duy nhất qua `getClientId(req)` (`src/controllers/client-context.ts`). Quyết định Q2–Q22: `docs/architecture.md` mục 9.
 
 Điểm chờ chốt: `docs/architecture.md#10-câu-hỏi-mở`. Không tự quyết, phải hỏi user.
 

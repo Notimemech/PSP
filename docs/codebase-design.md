@@ -46,17 +46,30 @@ Trạng thái: ✅ đã code (dừng ở mức server chạy được) · 📐 m
 | **Errors** `src/lib/errors.ts` | `new AppError(code, message, details?)`, `ErrorCode` | Map mã lỗi → HTTP status (SRS 4.4 + mã bổ sung chờ C3) | ✅ |
 | **HTTP shell** `src/app.ts` | `createApp({config, logger, prisma, …}) → Express` | Thứ tự middleware, giữ raw body cho HMAC, giới hạn body 100kb, 404, error handler (nơi duy nhất ghi response lỗi) | ✅ |
 | **Health** `GET /api/v1/health` | 200 `{status:"ok"}` / 503 `{status:"degraded"}` | Ping `SELECT 1` có timeout 2s; không lộ lỗi DB | ✅ |
-| **SecretBox** `src/lib/crypto.ts` | `seal(plain) → string`, `open(sealed) → string` | AES-256-GCM, IV 12 byte ngẫu nhiên, auth tag, định dạng `v1.<iv>.<tag>.<ct>` | 📐 |
+| **SecretBox** `src/lib/crypto.ts` | `seal(plain) → string`, `open(sealed) → string` | AES-256-GCM, IV 12 byte ngẫu nhiên, auth tag, định dạng `v1.<iv>.<tag>.<ct>` (base64url); `createSecretBox(key)`, kèm `safeEqual` timing-safe | ✅ |
 | **Client auth** `src/middlewares/hmac-auth.ts` | `clientAuth({clients, secretBox, clock, maxSkew})`: middleware, gắn `req.client` | Đọc header, kiểm tra lệch timestamp, giải mã secret, tính HMAC trên raw body, `timingSafeEqual`. Client không tồn tại hoặc bị khóa cũng trả 401 như chữ ký sai | 📐 |
 | **Admin auth** `src/middlewares/admin-auth.ts` | `adminAuth(adminKey)` | So sánh timing-safe | 📐 |
 | **Rate limit** `src/middlewares/rate-limit.ts` | `rateLimit({store, perSecond, clock})` | Cửa sổ 1 giây theo `client_id` đã xác thực; dọn key cũ để không phình bộ nhớ | 📐 |
 | **Idempotency** `src/middlewares/idempotency.ts` | `idempotent({store, ttl})`: middleware cho POST client | Bắt buộc header, `request_hash`, khóa `(client_id, key)`, phát lại response cũ, xử lý trùng key song song, hết hạn sau 24h | 📐 |
-| **Payment provider** `src/providers/` | `IPaymentProvider { code, capabilities, buildPaymentUrl, verifyReturnUrl, queryDr, refund }`; `registry.get(code)` | Thư viện `vnpay`, `vnp_Amount = amount × 100`, verify chữ ký response, timeout + retry có giới hạn, map mã kết quả VNPay → kết quả chuẩn (C11) | 📐 |
-| **Payment service** `src/services/payment.service.ts` (module sâu nhất) | `create`, `get`, `list`, `cancel`, `confirm(ref, source)`, `expireDue(now)`, `refund` | State machine 7 trạng thái, lock theo payment, đối chiếu FR-CB-03 (`needs_review`), outbox `webhook_events` trong cùng transaction, `payment_status_history`, sinh `vnp_TxnRef` | 📐 |
-| **Callback** `GET /api/v1/callbacks/:provider/return` | 302 về `return_url?payment_id=` | `verifyReturnUrl` → `paymentService.confirm` (queryDr bên trong) → redirect an toàn | 📐 |
+| **Payment provider** `src/providers/` | `IPaymentProvider { code, capabilities, buildPaymentUrl, verifyReturnUrl, queryDr, refund }`; `registry.get(code)` | Thư viện `vnpay`, `vnp_Amount = amount × 100`, verify chữ ký response, timeout `PROVIDER_TIMEOUT_MS` (chưa retry: return lỗi thì giữ PENDING), map mã kết quả VNPay → kết quả chuẩn (C11). queryDr tự gọi qua HTTP transport inject (thư viện không cho inject fetch), ký/verify bằng `hash` của thư viện; verify return bằng chuẩn hóa của thư viện + `timingSafeEqual`. `refund` chưa hỗ trợ | ✅ (refund 📐) |
+| **Payment service** `src/services/payment.service.ts` (module sâu nhất) | Đã có: `create`, `get`, `listByOrder`, `confirmFromReturn(provider, query)` (bên trong `confirm(payment, source)`). Sau: `cancel`, `expireDue(now)`, `refund` | State machine 7 trạng thái, lock theo payment, đối chiếu FR-CB-03 (`needs_review`), outbox `webhook_events` trong cùng transaction, `payment_status_history`, sinh `vnp_TxnRef` | ✅ (một phần) |
+| **Callback** `GET /api/v1/callbacks/:provider/return` | 302 về `return_url?payment_id=` | `verifyReturnUrl` → `paymentService.confirm` (queryDr bên trong) → redirect an toàn; chữ ký sai → 400 | ✅ |
 | **Webhook dispatcher** `src/jobs/webhook-dispatch.ts` | Job pg-boss `webhook.dispatch(eventId)` | Ký HMAC (C2), chặn SSRF, timeout 10s, lịch retry, đánh dấu FAILED | 📐 |
 | **Jobs** `src/jobs/index.ts` | `startJobs(deps) → stop()` | pg-boss schedule cho queryDr-pending, expire-payments và kích hoạt outbox (C12) | 📐 |
-| **Seed CLI** `src/cli/seed-client.ts` | `npm run seed:client -- --name <tên>` | Sinh `client_id` và secret, lưu `secret_encrypted`, in secret **một lần** | 📐 |
+| **Seed CLI** `src/cli/seed-client.ts` | `npm run seed:client -- --name <tên>` | Sinh `client_id` và secret, lưu `secret_encrypted`, in secret **một lần**; bật `vnpay` | ✅ |
+
+**Kết luận xác nhận (`ConfirmOutcome`)** — `confirm(payment, source)` trả một trong sáu giá trị; với return URL, `provider_callbacks.processed = true` chỉ khi kết luận là "đã có kết luận":
+
+| Giá trị | Ý nghĩa | `processed` |
+| --- | --- | --- |
+| `TRANSITIONED` | Đã chuyển SUCCEEDED/FAILED (+ history + outbox) | true |
+| `NEEDS_REVIEW` | Kết quả lệch/không xác định hoặc vi phạm unique (C5): bật `needs_review`, lưu `raw_response` | true |
+| `ALREADY_FINAL` | Payment đã ở trạng thái cuối/đã paid (hoặc lượt khác vừa xử lý trong lock) | true |
+| `SKIPPED_NEEDS_REVIEW` | Payment đã `needs_review`: bỏ qua, không gọi queryDr (Q17) | true |
+| `STILL_PENDING` | Provider báo chưa xong (`01`/`05`): lưu `raw_response`, giữ PENDING | false |
+| `NO_RESULT` | queryDr lỗi mạng/timeout/HTTP lỗi/chữ ký sai/thiếu/`vnp_ResponseCode` ≠ `00` | false |
+
+**Payload `provider_callbacks`** (dữ liệu từ trình duyệt): chỉ giữ key bắt đầu `vnp_`, bỏ `vnp_SecureHash`/`vnp_SecureHashType`, bỏ key dài hơn 255 ký tự; mỗi giá trị cắt còn 255 ký tự (mảng: tối đa 10 phần tử); tối đa 50 key. Áp cho cả lượt chữ ký đúng và sai.
 
 Vì sao `PaymentService` gom nhiều việc: return URL, job queryDr và job expire đều đi qua **cùng một** `confirm`. Nhờ vậy state machine, lock và outbox chỉ nằm ở một chỗ, sửa một lần là đúng ở mọi nơi gọi tới. Nếu tách thành `StateMachine`, `OutboxWriter`… mà caller phải tự ghép lại thì sẽ thành nhiều module nông.
 
@@ -67,19 +80,24 @@ src/
   server.ts                     composition root
   app.ts                        createApp(deps)
   config/env.ts                 loadConfig
-  lib/                          errors, logger, request-context
+  lib/                          errors, logger, request-context, id (ULID), crypto (SecretBox)
+  providers/                    IPaymentProvider, registry, index (dựng từ Config), vnpay/VnpayAdapter
+  services/payment.service.ts
+  repositories/                 db, client, payment, callback (+ health)
+  controllers/                  health, payment, callback, client-context (getClientId tạm thời, Q2)
+  cli/seed-client.ts
   middlewares/                  correlation-id, error-handler
   routes/index.ts               router /api/v1
-  controllers/health.controller.ts
-  repositories/health.repository.ts
   types/express.d.ts            req.correlationId, req.rawBody
-prisma/schema.prisma            datasource + generator; chưa có model
+prisma/schema.prisma            đủ model SRS §5 (bỏ api_key_hash)
+prisma/migrations/              init: bảng + partial unique C5 + seed provider vnpay
 tests/
   setup-env.ts                  env giả cố định cho mọi test
   global-setup.ts               prisma migrate deploy lên DB test
-  helpers/                      test-env, createTestApp
-  unit/                         config, logger
-  integration/                  health (Postgres thật)
+  helpers/                      test-env, createTestApp, db (seed/dọn theo client), vnpay (ký độc lập + stub transport)
+  unit/                         config, logger, id, crypto, vnpay-adapter, provider-registry
+  integration/                  health, payments, callback-return, seed-client, payment-repository,
+                                provider-capabilities (Postgres thật)
 docker/postgres/                script tạo DB pgs_test
 Dockerfile, docker-compose.yml
 ```
@@ -97,4 +115,7 @@ Dockerfile, docker-compose.yml
 - **`npm audit` báo 3 lỗ hổng high** ở `deepmerge-ts`, đi qua `@prisma/config`.
   - Đây là tooling của Prisma CLI: nó chỉ đọc config của chính dự án, không nhận input từ bên ngoài.
   - Bản sửa là lên Prisma 7, tức đúng phương án đã không chọn.
-- **Chưa làm** (📐 ở trên): model Prisma, HMAC, idempotency, rate limit, provider, service, job, seed CLI.
+- **Thư viện `vnpay` 2.5** (kéo theo `dayjs`): `VNPay.verifyReturnUrl` so chữ ký bằng `===`, `queryDr` gọi `fetch` toàn cục và coi response **thiếu** chữ ký là hợp lệ; `dateFormat(getDateInGMT7())` sai khi máy không chạy UTC. Vì vậy adapter chỉ dùng `buildPaymentUrl`, `buildPaymentUrlSearchParams`, `hash` của thư viện, tự format giờ GMT+7 và tự gọi queryDr qua transport inject.
+- **Test DB dùng chung giữa các file chạy song song**: không truncate toàn bảng; mỗi test tạo client ngẫu nhiên và xóa theo client (`tests/helpers/db.ts`).
+- **Chưa làm** (📐 ở trên): HMAC, idempotency, rate limit, admin auth, cancel, refund, webhook dispatcher, job.
+- **Nợ Q18 (bắt buộc trước production):** admin API liệt kê payment `needs_review` và quy trình hoàn tiền tay cho order bị trả tiền hai lần.

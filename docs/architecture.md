@@ -95,23 +95,23 @@ sequenceDiagram
 
 Chi tiết từng bước:
 
-1. **Tạo payment.** Client gọi `POST /api/v1/payments` có ký HMAC và `Idempotency-Key`. PGS xác thực, lấy `client_id` từ client đã xác thực (không từ body), kiểm tra client được dùng `vnpay` (FR-CL-04), validate bằng zod (số tiền integer, VND, `return_url` hợp lệ — quy tắc giới hạn `return_url` (chờ chốt – xem Câu hỏi mở C10)). PGS sinh `vnp_TxnRef` duy nhất toàn hệ thống (cột `provider_txn_ref`), lưu payment `PENDING` với `expires_at`, lưu response vào `idempotency_keys`.
+1. **Tạo payment.** Client gọi `POST /api/v1/payments` có ký HMAC và `Idempotency-Key`. PGS xác thực, lấy `client_id` từ client đã xác thực (không từ body), kiểm tra client được dùng `vnpay` (FR-CL-04), validate bằng zod (số tiền integer, VND, `return_url` hợp lệ — chỉ `https:`, `http:` chỉ cho localhost, C10 đã chốt). `payer_ip` tùy chọn (IPv4/IPv6, mặc định `127.0.0.1`, gửi làm `vnp_IpAddr`, Q20); `amount` phải nằm trong `min_amount`/`max_amount` của `providers.capabilities` (Q21); `metadata` tối đa 8192 byte JSON (Q22). PGS sinh `vnp_TxnRef` duy nhất toàn hệ thống (cột `provider_txn_ref`), lưu payment `PENDING` với `expires_at`, lưu response vào `idempotency_keys`.
 2. **PGS tự ký URL.** `VnpayAdapter` dùng thư viện `vnpay` để tạo `checkout_url` trỏ tới `sandbox.vnpayment.vn`, với `vnp_ReturnUrl = PUBLIC_BASE_URL + /api/v1/callbacks/vnpay/return`. Bước này **không gọi mạng** tới VNPay. Trả `201 { payment_id, status, checkout_url, expires_at }`.
 3. **Người dùng thanh toán** trên trang VNPay; PGS không thấy dữ liệu thẻ.
 4. **VNPay redirect** trình duyệt về `GET /api/v1/callbacks/vnpay/return?vnp_...`. Endpoint này không có HMAC client (trình duyệt gọi), nên mọi tham số đều là dữ liệu không tin cậy.
-5. **Verify chữ ký** bằng `verifyReturnUrl`. Sai chữ ký: không đổi trạng thái, ghi log (đã che), redirect an toàn. Payload có thể lưu vào `provider_callbacks` với `signature_valid`.
-6. **queryDr.** Chữ ký hợp lệ vẫn chưa đủ: PGS gọi `queryDr` tới VNPay sandbox để xác nhận trạng thái thật (FR-CB-02). Lỗi/timeout queryDr → giữ `PENDING`, để job queryDr xử lý sau. Mã kết quả VNPay nào được coi là thất bại xác định để chuyển FAILED (chờ chốt – xem Câu hỏi mở C11).
-7. **Đối chiếu** (FR-CB-03): `vnp_Amount / 100 === payment.amount`, `vnp_TxnRef === payment.provider_txn_ref`, `vnp_TmnCode` đúng merchant, kết quả queryDr khớp. Sai lệch → đặt cờ `needs_review = true`, **không** chuyển SUCCEEDED, ghi log cảnh báo. Cách xử lý tiếp payment có `needs_review` (chờ chốt – xem Câu hỏi mở C6).
-8. **Cập nhật trạng thái + outbox** trong **một transaction DB** (NFR-REL-01): lock payment (`SELECT ... FOR UPDATE` hoặc advisory lock), chỉ chuyển nếu đang `PENDING` (idempotent, FR-CB-04), ghi `transactions`, `payment_status_history` (source `api`/`job`), và chèn `webhook_events` (`payment.succeeded`/`payment.failed`). Cách bản ghi outbox kích hoạt job pg-boss (chờ chốt – xem Câu hỏi mở C12).
+5. **Verify chữ ký** (chuẩn hóa của thư viện `vnpay` + so sánh timing-safe). Sai chữ ký (kể cả tham số lặp/lồng): trả **400 `INVALID_SIGNATURE` JSON, không redirect**, không đổi trạng thái, không gọi queryDr, lưu `provider_callbacks` với `signature_valid = false` (payload chỉ giữ key `vnp_*`, bỏ `vnp_SecureHash`). Chữ ký đúng nhưng không tìm thấy `vnp_TxnRef` → **404 `NOT_FOUND`** (Q10, mục 9.19).
+6. **queryDr.** Chữ ký hợp lệ vẫn chưa đủ: PGS gọi `queryDr` tới VNPay sandbox để xác nhận trạng thái thật (FR-CB-02). Lỗi/timeout queryDr → giữ `PENDING`, để job queryDr xử lý sau. Map mã kết quả: C11 đã chốt (mục 9.16).
+7. **Đối chiếu** (FR-CB-03): `vnp_Amount / 100 === payment.amount`, `vnp_TxnRef === payment.provider_txn_ref`, `vnp_TmnCode` đúng merchant, kết quả queryDr khớp. Sai lệch → đặt cờ `needs_review = true`, **không** chuyển SUCCEEDED, ghi log cảnh báo. Payment `needs_review` giữ PENDING, không tạo event (C6 đã chốt, mục 9.17); các lượt sau bỏ qua, không gọi queryDr lại (Q17, mục 9.23).
+8. **Cập nhật trạng thái + outbox** trong **một transaction DB** (NFR-REL-01): lock payment (`SELECT ... FOR UPDATE` hoặc advisory lock), chỉ chuyển nếu đang `PENDING` (idempotent, FR-CB-04), ghi `transactions`, `payment_status_history` (source `API`/`JOB`), và chèn `webhook_events` (`payment.succeeded`/`payment.failed`). Cách bản ghi outbox kích hoạt job pg-boss (chờ chốt – xem Câu hỏi mở C12).
 9. **Redirect về client.** 302 tới `return_url` của client, thêm `payment_id` bằng `URL.searchParams` (FR-CB-05). Không chuyển tiếp tham số `vnp_*`. Client lấy trạng thái chính thức qua webhook hoặc `GET /api/v1/payments/{id}`.
 10. **Gửi webhook.** Worker pg-boss đọc `webhook_events`, ký HMAC-SHA256 bằng secret của client (giải mã từ `secret_encrypted`) kèm timestamp và `event_id` — tên header và chuỗi ký (chờ chốt – xem Câu hỏi mở C2) — rồi POST tới `webhook_url` với timeout 10 giây; không nhận 2xx thì retry theo lịch SRS mục 7 (ngay, +1m, +5m, +15m, +1h, +3h, +6h, +12h), hết lượt → `FAILED`, admin gửi lại qua `/api/v1/admin/webhooks/{id}/resend`.
 
 ### 3.1 Job queryDr cho payment PENDING (FR-CB-06)
 
 - Chạy mỗi phút (pg-boss schedule). Chọn payment `PENDING` có `created_at` quá N phút (mặc định 5) và chưa hết hạn.
-- Với từng payment: gọi `queryDr`, rồi đi qua đúng bước 7–8 ở trên (cùng hàm service, source `job`). Đây là đường dự phòng khi người dùng đóng trình duyệt hoặc redirect thất bại.
+- Với từng payment: gọi `queryDr`, rồi đi qua đúng bước 7–8 ở trên (cùng hàm service, source `JOB`). Đây là đường dự phòng khi người dùng đóng trình duyệt hoặc redirect thất bại.
 - Xử lý theo lô, lock từng payment để không đụng với return URL hoặc cancel đang chạy song song. Lỗi provider → bỏ qua, lần chạy sau thử lại.
-- Payment có `needs_review` có bị job bỏ qua không (chờ chốt – xem Câu hỏi mở C6).
+- Bỏ qua payment có `needs_review = true` (Q17, mục 9.23).
 
 ### 3.2 Job expire (FR-PM-05)
 
@@ -142,18 +142,18 @@ stateDiagram-v2
 
 | Từ | Sang | Tác nhân (source) | Điều kiện | Webhook |
 | --- | --- | --- | --- | --- |
-| PENDING | SUCCEEDED | return URL (`api`) / job queryDr (`job`) | Chữ ký hợp lệ + queryDr thành công + đối chiếu khớp | `payment.succeeded` |
-| PENDING | FAILED | return URL / job queryDr | queryDr xác nhận thất bại (tập mã VNPay chờ chốt – xem Câu hỏi mở C11) | `payment.failed` |
-| PENDING | EXPIRED | job expire (`job`) | `expires_at` đã qua, queryDr cuối không thành công | `payment.expired` |
-| PENDING | CANCELLED | client `POST /payments/{id}/cancel` (`api`) | Đang PENDING | Có sự kiện `payment.cancelled` hay không (chờ chốt – xem Câu hỏi mở C7) |
-| SUCCEEDED | REFUNDED | refund (`api`) | Refund toàn phần thành công | `refund.succeeded` |
-| SUCCEEDED | PARTIALLY_REFUNDED | refund (`api`) | Refund một phần thành công (mức S) | `refund.succeeded` |
-| PARTIALLY_REFUNDED | PARTIALLY_REFUNDED / REFUNDED | refund (`api`) | Tổng refund ≤ amount | `refund.succeeded` |
+| PENDING | SUCCEEDED | return URL (`API`) / job queryDr (`JOB`) | Chữ ký hợp lệ + queryDr thành công + đối chiếu khớp | `payment.succeeded` |
+| PENDING | FAILED | return URL / job queryDr | queryDr xác nhận thất bại (`vnp_TransactionStatus = 02`, C11 đã chốt) | `payment.failed` |
+| PENDING | EXPIRED | job expire (`JOB`) | `expires_at` đã qua, queryDr cuối không thành công | `payment.expired` |
+| PENDING | CANCELLED | client `POST /payments/{id}/cancel` (`API`) | Đang PENDING | Có sự kiện `payment.cancelled` hay không (chờ chốt – xem Câu hỏi mở C7) |
+| SUCCEEDED | REFUNDED | refund (`API`) | Refund toàn phần thành công | `refund.succeeded` |
+| SUCCEEDED | PARTIALLY_REFUNDED | refund (`API`) | Refund một phần thành công (mức S) | `refund.succeeded` |
+| PARTIALLY_REFUNDED | PARTIALLY_REFUNDED / REFUNDED | refund (`API`) | Tổng refund ≤ amount | `refund.succeeded` |
 
 Quy tắc:
 
 - `PENDING` là trạng thái duy nhất đổi được trước thanh toán. `FAILED`, `EXPIRED`, `CANCELLED` là trạng thái cuối; `REFUNDED` không còn chuyển tiếp.
-- Mọi chuyển khác trả `409 INVALID_STATE`. Mọi lần chuyển ghi `payment_status_history` (`from_status`, `to_status`, `source`: `api`/`job`/`admin`; `ipn` dành cho giai đoạn sau).
+- Mọi chuyển khác trả `409 INVALID_STATE`. Mọi lần chuyển ghi `payment_status_history` (`from_status`, `to_status`, `source`: `API`/`JOB`/`ADMIN`; `IPN` dành cho giai đoạn sau).
 - Sai lệch số tiền/mã (FR-CB-03) là cờ `needs_review`, **không** phải trạng thái.
 - Refund thất bại không đổi trạng thái payment và phát `refund.failed`. Trạng thái refund: `PENDING`, `SUCCEEDED`, `FAILED` là **bổ sung** của tài liệu này (SRS chỉ nêu `MANUAL_REQUIRED`, mức S, FR-RF-04); `MANUAL_REQUIRED` thêm khi làm FR-RF-04.
 - FR-PM-04: một `(client_id, order_id)` chỉ có tối đa một payment đã thanh toán, bằng partial unique index trong Postgres — điều kiện `WHERE paid_at IS NOT NULL`, phủ SUCCEEDED, PARTIALLY_REFUNDED, REFUNDED (đã chốt C5, mục 9).
@@ -175,14 +175,14 @@ Theo SRS mục 5. Mọi bảng có `created_at`, `updated_at`. Không có bảng
 | --- | --- | --- |
 | `clients` | id, name, secret_encrypted (AES-256-GCM), webhook_url, webhook_events, status, provider_config_id | Khóa mã hóa từ env `ENCRYPTION_KEY` (NFR-SEC-02). Trong Prisma, trường của cột `webhook_events` đặt tên `subscribedEvents` và `@map("webhook_events")`, để tránh trùng tên với bảng `webhook_events` |
 | `providers` | code, name, capabilities (JSON), status | Bật/tắt không cần deploy |
-| `provider_configs` | id, provider_code, environment, credentials (mã hóa), status | MVP: VNPay sandbox |
+| `provider_configs` | id, provider_code, environment, credentials_encrypted, status | MVP: VNPay sandbox |
 | `client_providers` | client_id, provider_code, is_enabled | PK (client_id, provider_code) |
 | `payments` | id, client_id, order_id, amount (integer), currency, status, provider_code, provider_txn_ref, description, return_url, metadata, expires_at, paid_at, needs_review | `provider_txn_ref` unique toàn hệ thống; partial unique (client_id, order_id) `WHERE paid_at IS NOT NULL` (C5); `needs_review` là cột bổ sung theo quyết định 2026-10-21 |
 | `transactions` | id, payment_id, provider_code, provider_txn_id, amount, status, raw_request, raw_response | unique (provider_code, provider_txn_id); raw không chứa secret |
 | `refunds` | id, payment_id, amount, reason, status, provider_refund_id | Tổng refund ≤ amount; giá trị `status` xem mục 4 |
-| `provider_callbacks` | id, provider_code, payload, signature_valid, processed, received_at | MVP lưu return URL; IPN dùng sau |
-| `webhook_events` | id (event_id), client_id, type, payload, status, attempts, next_retry_at, last_response | Outbox, ghi cùng transaction với đổi trạng thái |
-| `idempotency_keys` | client_id, key, request_hash, response, expires_at | PK (client_id, key), hết hạn 24h; có cache response lỗi hay không (chờ chốt – xem Câu hỏi mở C9) |
+| `provider_callbacks` | id, provider_code, payment_id (nullable), payload, signature_valid, processed, received_at | MVP lưu return URL (payload bỏ `vnp_SecureHash`); IPN dùng sau |
+| `webhook_events` | id (event_id), client_id, payment_id (nullable), type, payload, status, attempts, next_retry_at, last_response | Outbox, ghi cùng transaction với đổi trạng thái |
+| `idempotency_keys` | client_id, key, request_hash, response_status, response_body, expires_at | PK (client_id, key), hết hạn 24h; có cache response lỗi hay không (chờ chốt – xem Câu hỏi mở C9) |
 | `payment_status_history` | id, payment_id, from_status, to_status, source | Audit mọi lần đổi trạng thái |
 | `reconciliation_items` | id, date, provider_code, provider_txn_id, issue_type, resolved | Giai đoạn 2 |
 | schema `pgboss` | do pg-boss tự tạo | Hàng đợi webhook và job |
@@ -217,6 +217,30 @@ User chốt ngày 2026-10-22:
 10. **Line ending LF** qua `.gitattributes`.
 11. **Prisma 6.19** (không lên Prisma 7 vì Prisma 7 bắt buộc thêm `@prisma/adapter-pg`, ngoài danh sách thư viện). Thiết kế module: [`codebase-design.md`](codebase-design.md).
 
+User chốt ngày 2026-10-22 (API thanh toán + return URL, Q2–Q16):
+
+12. **Q2 — client_id tạm thời:** controller đọc `X-Client-Id` **chưa xác thực** qua một hàm duy nhất `getClientId(req)` (chỉ local/sandbox, lỗ hổng đã biết cho tới khi có middleware HMAC). Service/repository vẫn lọc mọi query theo `clientId`. Client không tồn tại hoặc `DISABLED` → `401 INVALID_SIGNATURE` (không phân biệt).
+13. **Q3:** chưa bắt `Idempotency-Key`; bảng `idempotency_keys` đã có trong schema.
+14. **Q4–Q5:** schema đầy đủ mục 6 (bỏ `api_key_hash`) trong một migration `init`; ID dạng `<tiền tố>_<ULID>` (`cli_`, `pay_`, `txn_`, `rfd_`, `cbk_`, `evt_`, `psh_`, `pcf_`, `rec_`), ULID tự viết trong `src/lib/id.ts`. `vnp_TxnRef` = ULID trần (26 ký tự), lưu ở `payments.provider_txn_ref`.
+15. **Q6:** tạo payment tạo luôn một transaction `PENDING` (`raw_request` không có `vnp_SecureHash`); kết quả queryDr ghi `provider_txn_id = vnp_TransactionNo`, `raw_response` (không có chữ ký).
+16. **Q7 (= C11):** map `vnp_TransactionStatus` của queryDr: `00` → SUCCEEDED; `01`, `05` → giữ PENDING; `02` → FAILED; mã khác → giữ PENDING + `needs_review`. queryDr lỗi/timeout/chữ ký response sai → giữ PENDING. Đối chiếu FR-CB-03: số tiền, `vnp_TxnRef`, `vnp_TmnCode`; lệch → `needs_review`, không SUCCEEDED.
+17. **Q8 (= C6):** `needs_review` giữ PENDING, không tạo event.
+18. **Q9 outbox:** SUCCEEDED/FAILED trong một transaction DB: `SELECT ... FOR UPDATE`, kiểm tra lại PENDING, cập nhật payment (+`paid_at`), transaction, `payment_status_history` (source `API`), insert `webhook_events` (`payment.succeeded`/`payment.failed`, payload `event_id`, `type`, `payment` gồm metadata nguyên văn). Chưa lọc theo loại event client đăng ký (lọc lúc gửi).
+19. **Q10 return:** chữ ký sai → `400 INVALID_SIGNATURE` JSON, lưu `provider_callbacks` (`signature_valid=false`); không thấy `vnp_TxnRef` → 404; tìm thấy → luôn 302 về `return_url` + `payment_id` (kể cả khi queryDr lỗi); payment đã ở trạng thái cuối → không cập nhật lại.
+20. **Q11 (= C10):** `return_url` chỉ `https:`; `http:` chỉ cho `localhost`/`127.0.0.1`.
+21. **Q12–Q14:** `amount` là `Int` (≤ 2 147 483 647); seed CLI `npm run seed:client -- --name <tên>` (secret 32 byte hex, in một lần, bật `vnpay`); migration seed provider `vnpay`; `expires_in` 300..3600 giây (mặc định `PAYMENT_TTL_SECONDS`), gửi `vnp_ExpireDate`.
+22. **Q15–Q16:** order đã có payment `paid_at IS NOT NULL` → `409 INVALID_STATE`; provider khác `vnpay`, chưa bật cho client hoặc `DISABLED` → `403 PROVIDER_NOT_ALLOWED`.
+
+User chốt ngày 2026-10-22 (vòng rà soát API, Q17–Q22, theo đề xuất):
+
+23. **Q17 — needs_review:** mọi đường xác nhận tự động (return URL, job queryDr/expire sau này) **bỏ qua** payment có `needs_review = true` (kết luận `SKIPPED_NEEDS_REVIEW`). `needs_review` (boolean) được trả trong `GET /payments/{id}` và từng item của danh sách.
+24. **Q18 — order bị trả tiền hai lần:** MVP xử lý tay. Code chỉ dựa vào partial unique index C5: payment xác nhận thứ hai vi phạm unique → **không** 500, giữ `PENDING`, bật `needs_review`, lưu `raw_response`, log cảnh báo (không có secret).
+    - **Nợ kỹ thuật / rủi ro:** payer thứ hai đã bị VNPay trừ tiền nhưng PGS không phát event nào; nếu không ai xem danh sách `needs_review` thì tiền treo tới khi đối soát (FR-RC, giai đoạn 2). Cần admin API liệt kê `needs_review` và quy trình hoàn tiền tay trước khi lên production.
+25. **Q19:** `GET /payments?order_id=` trả mỗi item cùng dạng chi tiết (kèm `transactions`, `refunds`), vẫn lọc theo `client_id`.
+26. **Q20:** `POST /payments` nhận `payer_ip` tùy chọn (IPv4/IPv6), mặc định `127.0.0.1`, gửi VNPay làm `vnp_IpAddr`; sai định dạng → `400 VALIDATION_ERROR`. queryDr vẫn gửi IP máy chủ.
+27. **Q21:** giới hạn số tiền đọc từ `providers.capabilities` (`min_amount`/`max_amount`; seed `vnpay`: 5 000 .. 999 999 999), là nguồn duy nhất; ngoài khoảng → `400 VALIDATION_ERROR`, `details = [{ path: "amount", message, min, max }]` (cùng dạng mảng với lỗi zod). Vẫn giữ trần zod `Int ≤ 2 147 483 647`.
+28. **Q22:** `metadata` sau khi serialize JSON tối đa **8192 byte** (UTF-8); vượt → `400 VALIDATION_ERROR`.
+
 Các điểm chốt trong vòng rà soát Phase 1 (không phải câu trả lời của user ngày 2026-10-21): chuỗi ký HMAC (theo `.claude/rules/api-design.md`); `ADMIN_API_KEY` bắt buộc, app fail-fast khi khởi động nếu thiếu hoặc ngắn hơn 32 ký tự (mục 7); trạng thái refund bổ sung (mục 4); tên trường Prisma `subscribedEvents` (mục 6).
 
 ## 10. Câu hỏi mở
@@ -230,12 +254,12 @@ Các điểm dưới đây **chờ user chốt**. Phương án đề xuất ch�
 | C3 | Mã lỗi bổ sung ngoài SRS 4.4. | `429 RATE_LIMITED`, `500 INTERNAL_ERROR`, `401 UNAUTHORIZED` cho admin, `409 IDEMPOTENCY_CONFLICT` với `details.reason = "in_progress"` khi request trùng key đang xử lý. |
 | C4 | Finding Medium/Low đã CONFIRMED có được để lại (chưa sửa) không? | Được, nếu user chấp nhận rõ ràng và được ghi vào `tests/security/open-findings.json`; High/Critical không bao giờ được để lại. |
 | C5 | ~~Phạm vi unique của FR-PM-04.~~ | **Đã chốt 2026-10-22 (mục 9.7):** `WHERE paid_at IS NOT NULL`. |
-| C6 | Payment có `needs_review` xử lý thế nào? | Giữ `PENDING`; job queryDr/expire bỏ qua; không bắn webhook; admin xử lý tay. |
+| C6 | ~~Payment có `needs_review` xử lý thế nào?~~ | **Đã chốt 2026-10-22 (mục 9.17 + 9.23):** giữ `PENDING`, không tạo event, mọi đường xác nhận tự động (return URL, job queryDr/expire) đều bỏ qua. |
 | C7 | Có thêm sự kiện `payment.cancelled` không? | Không ở MVP. |
 | C8 | `POST /api/v1/admin/*` có cần `Idempotency-Key` không? | Miễn. |
 | C9 | Có cache response lỗi theo idempotency key không? | Cache 2xx/4xx; với 5xx/502/504 thì giải phóng key để client thử lại. |
-| C10 | Giới hạn `return_url`. | Chỉ `https:` (cho phép `http://localhost` khi chưa production); hoặc allowlist domain theo từng client. |
-| C11 | Mã VNPay nào dẫn tới FAILED (vd `24` = người dùng hủy)? | FAILED chỉ khi queryDr trả kết quả thất bại xác định; mọi trường hợp khác giữ PENDING (job queryDr/expire xử lý tiếp). |
+| C10 | ~~Giới hạn `return_url`.~~ | **Đã chốt 2026-10-22 (mục 9.20):** chỉ `https:`; `http:` chỉ cho `localhost`/`127.0.0.1`. |
+| C11 | ~~Mã VNPay nào dẫn tới FAILED?~~ | **Đã chốt 2026-10-22 (mục 9.16):** `02` → FAILED; `00` → SUCCEEDED; `01`/`05` → PENDING; mã khác → PENDING + `needs_review`. |
 | C12 | Outbox kích hoạt pg-boss thế nào? | (a) Gọi `send` của pg-boss trong cùng transaction DB với việc ghi `webhook_events`; hoặc (b) job định kỳ quét `webhook_events` đang chờ gửi rồi tạo job. |
 | C13 | ~~Rate limit lưu bộ đếm ở đâu?~~ | **Đã chốt 2026-10-22 (mục 9.8):** trong process theo `client_id`, một instance dùng chung. |
 

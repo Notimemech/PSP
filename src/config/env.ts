@@ -33,7 +33,8 @@ const schema = z.object({
   ENCRYPTION_KEY: encryptionKey,
   ADMIN_API_KEY: z.string().min(32),
 
-  PAYMENT_TTL_SECONDS: intFromEnv(900),
+  // Q14: khớp khoảng expires_in cho phép (300..3600 giây).
+  PAYMENT_TTL_SECONDS: z.coerce.number().int().min(300).max(3600).default(900),
   QUERYDR_PENDING_AFTER_MINUTES: intFromEnv(5),
   QUERYDR_INTERVAL_SECONDS: intFromEnv(60),
   WEBHOOK_TIMEOUT_MS: intFromEnv(10_000),

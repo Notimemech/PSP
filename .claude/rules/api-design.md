@@ -38,6 +38,8 @@ Mọi lỗi trả về theo cấu trúc: `{ "error": { "code": "...", "message":
 | 504 | `PROVIDER_TIMEOUT` | Provider không phản hồi trong `PROVIDER_TIMEOUT_MS` | SRS 4.4 |
 | 400 | `VALIDATION_ERROR` | Thiếu `Idempotency-Key` ở POST client | Diễn giải SRS 4.4 (+FR-PM-03) |
 | 404 | `NOT_FOUND` | Tài nguyên thuộc client khác (không trả 403 để tránh lộ sự tồn tại) | Diễn giải SRS 4.4 (+FR-QR-03) |
+| 400 | `INVALID_SIGNATURE` | Return VNPay sai chữ ký (trình duyệt gọi, không redirect) | Q10 (user chốt 2026-10-22) |
+| 400 | `VALIDATION_ERROR` | `amount` ngoài `min_amount`/`max_amount` của provider (`details = [{path, message, min, max}]`, cùng dạng mảng với lỗi zod); `metadata` > 8192 byte; `payer_ip` không phải IPv4/IPv6 | Q20–Q22 (user chốt 2026-10-22) |
 | 409 | `IDEMPOTENCY_CONFLICT` | Request cùng key đang được xử lý: trả ngay, `details.reason = "in_progress"` | Bổ sung: đề xuất – chờ user chốt |
 | 429 | `RATE_LIMITED` | Vượt rate limit theo client | Bổ sung: đề xuất – chờ user chốt |
 | 401 | `UNAUTHORIZED` | Admin API: thiếu/sai `X-Admin-Key` | Bổ sung: đề xuất – chờ user chốt |
@@ -45,6 +47,8 @@ Mọi lỗi trả về theo cấu trúc: `{ "error": { "code": "...", "message":
 
 - Tên các mã lỗi bổ sung (chờ user chốt, xem docs/architecture.md#10-câu-hỏi-mở). Code và test nên tham chiếu hằng số trong `src/lib/errors`, không hard-code chuỗi rải rác.
 - Không lộ stack trace, câu SQL hay secret trong `message`/`details`.
+- Return URL VNPay (`GET /api/v1/callbacks/vnpay/return`, Q10 đã chốt 2026-10-22): chữ ký sai → **400** `INVALID_SIGNATURE` (không redirect); chữ ký đúng nhưng không thấy `vnp_TxnRef` → 404; tìm thấy payment → luôn 302 về `return_url?payment_id=`, kể cả khi queryDr lỗi.
+- `return_url` (C10 đã chốt): chỉ `https:`, `http:` chỉ cho `localhost`/`127.0.0.1`.
 
 ## Xác thực HMAC (client → PGS)
 
@@ -73,6 +77,9 @@ Mọi lỗi trả về theo cấu trúc: `{ "error": { "code": "...", "message":
 - `routes/`: khai báo path + middleware, không chứa logic.
 - `controllers/`: parse/validate bằng zod, gọi service, map kết quả sang JSON snake_case.
 - `services/`: nghiệp vụ, state machine, transaction (outbox); không biết `req`/`res`.
-- `repositories/`: truy cập Prisma; mọi hàm nhận `clientId` và lọc theo nó. Raw query chỉ dùng tagged template `Prisma.sql`, không nối chuỗi.
+- `repositories/`: truy cập Prisma; hàm đọc/ghi bảng thuộc client nhận `clientId` và lọc theo nó. Raw query chỉ dùng tagged template `Prisma.sql`, không nối chuỗi. Ngoại lệ không nhận `clientId`:
+  - Bảng con theo `payment_id` (`transactions`, `payment_status_history`, `webhook_events`) chỉ ghi sau khi service đã lock/đọc payment theo `clientId` trong cùng transaction DB.
+  - `findPaymentByProviderRef`: return URL chưa biết client; `provider_txn_ref` unique toàn hệ thống.
+  - `provider_callbacks`: không thuộc client nào (dữ liệu provider gửi về).
 - `providers/`: adapter cài `IPaymentProvider`; service gọi provider qua `registry`, không import trực tiếp `VnpayAdapter`.
 - `app.ts` export `createApp(deps)` (inject repository, provider registry, HTTP transport, clock) để test dựng app không cần mở port.

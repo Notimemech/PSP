@@ -29,6 +29,17 @@ describe('loadConfig', () => {
     expect(() => loadConfig(withEnv(patch))).toThrow(field);
   });
 
+  it.each([
+    ['299', false],
+    ['300', true],
+    ['3600', true],
+    ['3601', false],
+  ])('PAYMENT_TTL_SECONDS=%s hợp lệ: %s (Q14: 300..3600)', (value, ok) => {
+    const load = () => loadConfig(withEnv({ PAYMENT_TTL_SECONDS: value }));
+    if (ok) expect(load().payment.ttlSeconds).toBe(Number(value));
+    else expect(load).toThrow(/PAYMENT_TTL_SECONDS/);
+  });
+
   it('thông báo lỗi không chứa giá trị secret', () => {
     const secret = 'short-secret-value';
     try {

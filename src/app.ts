@@ -6,12 +6,18 @@ import type { Config } from './config/env.js';
 import type { Logger } from './lib/logger.js';
 import { correlationId } from './middlewares/correlation-id.js';
 import { errorHandler, notFoundHandler } from './middlewares/error-handler.js';
+import type { ProviderRegistry } from './providers/registry.js';
 import { apiV1Router } from './routes/index.js';
+import { createPaymentService } from './services/payment.service.js';
 
 export interface AppDeps {
   config: Config;
   logger: Logger;
   prisma: PrismaClient;
+  /** Adapter provider (đã nhận HTTP transport từ composition root). */
+  providers: ProviderRegistry;
+  /** Đồng hồ; test truyền đồng hồ cố định. */
+  clock: () => Date;
 }
 
 const JSON_BODY_LIMIT = '100kb';
@@ -32,7 +38,14 @@ export function createApp(deps: AppDeps): Express {
     }),
   );
 
-  app.use('/api/v1', apiV1Router(deps));
+  const payments = createPaymentService({
+    prisma: deps.prisma,
+    providers: deps.providers,
+    clock: deps.clock,
+    logger: deps.logger,
+    defaultTtlSeconds: deps.config.payment.ttlSeconds,
+  });
+  app.use('/api/v1', apiV1Router(deps, { payments }));
 
   app.use(notFoundHandler());
   app.use(errorHandler(deps.logger));

@@ -34,8 +34,8 @@ Mục có ghi "(chờ user chốt, xem docs/architecture.md#10-câu-hỏi-mở)"
 - [ ] Mọi dữ liệu return URL đều qua `verifyReturnUrl`; chữ ký sai → không đổi trạng thái, ghi `provider_callbacks.signature_valid = false`.
 - [ ] Chữ ký đúng vẫn phải gọi queryDr để xác nhận rồi mới cập nhật payment (FR-CB-02); verify chữ ký response queryDr.
 - [ ] Đối chiếu số tiền (`vnp_Amount` = amount × 100) và `vnp_TxnRef` với dữ liệu đã lưu; lệch → `needs_review = true`, không chuyển SUCCEEDED.
-- [ ] Xử lý tiếp payment `needs_review` (chờ user chốt, xem docs/architecture.md#10-câu-hỏi-mở).
-- [ ] Mã phản hồi VNPay nào thì chuyển FAILED (chờ user chốt, xem docs/architecture.md#10-câu-hỏi-mở); mã không xác định thì giữ PENDING: đề xuất (C11).
+- [ ] Payment `needs_review` (C6 đã chốt 2026-10-22): giữ `PENDING`, không tạo event, không tự xác nhận lại (Q17), kể cả job queryDr/expire; xử lý tay.
+- [ ] Map `vnp_TransactionStatus` của queryDr (C11 đã chốt 2026-10-22): `00` → SUCCEEDED; `01`, `05` → giữ PENDING; `02` → FAILED; mã khác → giữ PENDING + `needs_review`. queryDr lỗi/timeout/chữ ký response sai hoặc thiếu → giữ PENDING.
 - [ ] `VNP_HOST` chỉ là sandbox; không hard-code host production.
 
 ## NFR-SEC-04: Log và dữ liệu nhạy cảm
@@ -58,6 +58,7 @@ Mục có ghi "(chờ user chốt, xem docs/architecture.md#10-câu-hỏi-mở)"
 - [ ] Return URL/queryDr/job xử lý idempotent: cùng kết quả nhận nhiều lần chỉ cập nhật một lần (FR-CB-04).
 - [ ] Lock theo payment khi đổi trạng thái (`SELECT ... FOR UPDATE` hoặc `pg_advisory_xact_lock`); kiểm tra trạng thái nguồn hợp lệ trong lock.
 - [ ] Một `order_id` không có hơn một payment SUCCEEDED (FR-PM-04); partial unique index `(client_id, order_id) WHERE paid_at IS NOT NULL` (C5 đã chốt). `provider_txn_ref` unique toàn hệ thống.
+- [ ] Q18: xác nhận vi phạm unique (order đã có payment khác được trả) → `needs_review` + lưu `raw_response`, không 500, không event. Nợ: bắt buộc có admin API liệt kê payment `needs_review` và quy trình hoàn tiền tay trước khi lên production.
 - [ ] Refund: tổng hoàn ≤ số đã trả, kiểm tra trong lock → `REFUND_EXCEEDS_AMOUNT`.
 
 ## NFR-OBS-01 / NFR-OBS-03: Log và audit
@@ -73,9 +74,10 @@ Mục có ghi "(chờ user chốt, xem docs/architecture.md#10-câu-hỏi-mở)"
 
 ## Đầu vào, SSRF và webhook gửi đi
 
-- [ ] Validate mọi input bằng zod; số tiền là integer dương.
+- [ ] Validate mọi input bằng zod; số tiền là integer dương, nằm trong `min_amount`/`max_amount` của `providers.capabilities` (Q21; cấu hình hỏng → 500, fail closed).
+- [ ] `metadata` ≤ 8192 byte JSON UTF-8 (Q22); `payer_ip` chỉ IPv4/IPv6 (Q20).
 - [ ] Raw SQL chỉ dùng `Prisma.sql`/tagged template, không nối chuỗi.
-- [ ] Giới hạn `return_url` (scheme, host) (chờ user chốt, xem docs/architecture.md#10-câu-hỏi-mở).
+- [ ] `return_url` (C10 đã chốt 2026-10-22): chỉ `https:`; `http:` chỉ khi host là `localhost`/`127.0.0.1`; không có user:pass.
 - [ ] Webhook URL: chặn IP private/loopback/link-local/metadata (169.254.169.254) khi gửi; không follow redirect; timeout `WEBHOOK_TIMEOUT_MS`.
 - [ ] Webhook gửi đi ký HMAC-SHA256 bằng secret client kèm timestamp, có `event_id` duy nhất (FR-WH-02, FR-WH-05). Định dạng header/chuỗi ký (chờ user chốt, xem docs/architecture.md#10-câu-hỏi-mở).
 - [ ] Sự kiện `payment.cancelled` (chờ user chốt, xem docs/architecture.md#10-câu-hỏi-mở).

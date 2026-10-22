@@ -11,6 +11,7 @@
     "dev": "node --env-file-if-exists=.env --watch --import tsx src/server.ts",
     "build": "tsc -p tsconfig.build.json",
     "start": "node --env-file-if-exists=.env dist/server.js",
+    "seed:client": "node --env-file-if-exists=.env --import tsx src/cli/seed-client.ts",
     "test": "vitest run --project main",
     "test:security": "vitest run --project security --passWithNoTests",
     "lint": "eslint .",
@@ -22,6 +23,7 @@
     "@prisma/client": "^6.19.3",
     "express": "^5.3.0",
     "prisma": "^6.19.3",
+    "vnpay": "^2.5.0",
     "zod": "^4.6.7"
   },
   "devDependencies": {

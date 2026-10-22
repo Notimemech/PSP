@@ -41,10 +41,12 @@ export class AppError extends Error {
     readonly code: ErrorCode,
     message: string,
     readonly details?: unknown,
+    /** Ghi đè HTTP status mặc định của mã lỗi; chỉ dùng khi quyết định đã chốt yêu cầu (vd return VNPay sai chữ ký → 400, Q10). */
+    status?: number,
   ) {
     super(message);
     this.name = 'AppError';
-    this.status = HTTP_STATUS[code];
+    this.status = status ?? HTTP_STATUS[code];
   }
 }
 

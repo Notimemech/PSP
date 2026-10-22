@@ -4,6 +4,7 @@ import { PrismaClient } from '@prisma/client';
 import { createApp } from './app.js';
 import { ConfigError, loadConfig, type Config } from './config/env.js';
 import { createLogger } from './lib/logger.js';
+import { buildProviderRegistry } from './providers/index.js';
 
 const SHUTDOWN_TIMEOUT_MS = 10_000;
 
@@ -23,7 +24,13 @@ function main(): void {
   const logger = createLogger({ level: config.logLevel, base: { service: 'pgs' } });
   const prisma = new PrismaClient({ datasourceUrl: config.databaseUrl });
 
-  const app = createApp({ config, logger, prisma });
+  const clock = () => new Date();
+  const providers = buildProviderRegistry(config, {
+    transport: (input, init) => globalThis.fetch(input, init),
+    clock,
+  });
+
+  const app = createApp({ config, logger, prisma, providers, clock });
   const server: Server = app.listen(config.port, () => {
     logger.info('server listening', { port: config.port, env: config.env });
   });
