@@ -4,7 +4,7 @@ PGS là backend service độc lập, cung cấp một REST API thống nhất �
 Bản đầu chỉ kết nối VNPay sandbox (chưa có IPN); kết quả được xác nhận bằng return URL (verify chữ ký) + queryDr, sau đó báo cho client qua webhook.
 Một instance dùng chung cho nhiều client (multi-tenant theo `client_id`), không có UI. Nguồn yêu cầu duy nhất: [`docs/srs.md`](docs/srs.md).
 
-Tài liệu thêm: `docs/architecture.md`, `docs/adr/`, `.claude/rules/` (api-design, testing, security).
+Tài liệu thêm: `docs/architecture.md`, `docs/codebase-design.md` (bản đồ module, seam), `docs/adr/`, `.claude/rules/` (api-design, testing, security).
 
 ## Stack
 
@@ -43,7 +43,7 @@ docs/                               # srs.md, architecture.md, adr/, security/re
 - Lint: `npm run lint` · Typecheck: `npm run typecheck` · Format: `npm run format`
 - Migrate: `npx prisma migrate dev` (dev), `npx prisma migrate deploy`, `npx prisma generate`
 - Seed client: `npm run seed:client -- --name <tên>`
-- Docker: `docker compose up -d postgres` (chỉ DB), `docker compose up --build` (cả stack), `docker compose down`
+- Docker (cổng DB host đổi bằng `PGS_DB_HOST_PORT` nếu 5432 bị chiếm): `docker compose up -d postgres` (chỉ DB), `docker compose up --build` (cả stack), `docker compose down`
 
 ## Quyết định đã chốt (2026-10-21)
 
@@ -60,7 +60,7 @@ docs/                               # srs.md, architecture.md, adr/, security/re
   - KHÔNG dùng pino, opossum, helmet: logger JSON (có mask) và retry/timeout/circuit đều tự viết trong `src/lib/`.
   - Dev TypeScript (chốt 2026-10-22): `tsx`, `@types/node`, `@types/express`, `@types/supertest`, `typescript-eslint`, `@eslint/js`, `globals`, `@vitest/coverage-v8`.
 - **Không cài thư viện mới khi chưa hỏi user.**
-- Chốt 2026-10-22: xác thực client = `X-Client-Id` + HMAC, không có header API key riêng (C1); FR-PM-04 unique `WHERE paid_at IS NOT NULL` (C5); rate limit trong process theo `client_id`, một instance dùng chung (C13); line ending LF.
+- Chốt 2026-10-22: xác thực client = `X-Client-Id` + HMAC, không có header API key riêng (C1); FR-PM-04 unique `WHERE paid_at IS NOT NULL` (C5); rate limit trong process theo `client_id`, một instance dùng chung (C13); line ending LF; bỏ cột `api_key_hash`; Prisma **6.19** (không lên 7 vì cần `@prisma/adapter-pg`); TypeScript 6.0 (typescript-eslint chưa hỗ trợ 7); Express 5; ESM (import nội bộ có đuôi `.js`).
 
 Chốt trong vòng rà soát Phase 1:
 

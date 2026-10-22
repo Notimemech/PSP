@@ -22,11 +22,20 @@ const FIELDS = {
   WebFetch: ['url'],
 };
 // Tool khác (vd mcp__*): kiểm tra các trường thường chứa đường dẫn/URL.
-const DEFAULT_FIELDS = ['file_path', 'notebook_path', 'path', 'pattern', 'command', 'url', 'glob', 'uri', 'href'];
+const DEFAULT_FIELDS = [
+  'file_path',
+  'notebook_path',
+  'path',
+  'pattern',
+  'command',
+  'url',
+  'glob',
+  'uri',
+  'href',
+];
 
 // .env hoặc .env.<x> đứng như một tên file (có ranh giới trước/sau).
-const ENV_RE =
-  /(^|[\\/\s"'`=:,;({<>|[+])\.env(\.[A-Za-z0-9_.*?-]*)?(?=$|[\s"'`;|&)}<>,*?\\/:\]+~])/gi;
+const ENV_RE = /(^|[\\/\s"'`=:,;({<>|[+])\.env(\.[A-Za-z0-9_.*?-]*)?(?=$|[\s"'`;|&)}<>,*?\\/:\]+~])/gi;
 // Host kết thúc bằng vnpay.vn (pay.vnpay.vn, merchant.vnpay.vn, vnpay.vn...). Không khớp vnpayment.vn,
 // không khớp tên file kiểu "vnpay.vn.md".
 const VNPAY_PROD_RE = /(^|[^A-Za-z0-9-])((?:[A-Za-z0-9-]+\.)*vnpay\.vn)(?!\.?[A-Za-z0-9-])/i;
@@ -139,15 +148,13 @@ function main() {
   }
   const reason = findViolation(input?.tool_name, input?.tool_input);
   if (reason) {
-    process.stderr.write(
-      `[guard] Bị chặn: ${reason}\nKhông tìm cách lách; nếu thật sự cần, hãy hỏi user.\n`,
-    );
+    process.stderr.write(`[guard] Bị chặn: ${reason}\nKhông tìm cách lách; nếu thật sự cần, hãy hỏi user.\n`);
     return 2;
   }
   return 0;
 }
 
-let code = 0;
+let code;
 try {
   code = main();
 } catch {

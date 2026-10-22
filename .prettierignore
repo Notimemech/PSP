@@ -1,0 +1,6 @@
+dist/
+coverage/
+node_modules/
+package-lock.json
+# Tài liệu tiếng Việt viết tay: không tự định dạng lại
+**/*.md

@@ -1,0 +1,11 @@
+// Prisma schema của PGS. Các model nghiệp vụ (SRS mục 5) được thêm ở bước sau.
+// Quyết định: không có cột api_key_hash (C1 tối giản, user chốt 2026-10-22).
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}

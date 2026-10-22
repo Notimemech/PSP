@@ -173,7 +173,7 @@ Theo SRS mục 5. Mọi bảng có `created_at`, `updated_at`. Không có bảng
 
 | Bảng | Trường chính | Ghi chú |
 | --- | --- | --- |
-| `clients` | id, name, api_key_hash (SHA-256), secret_encrypted (AES-256-GCM), webhook_url, webhook_events, status, provider_config_id | Khóa mã hóa từ env `ENCRYPTION_KEY` (NFR-SEC-02). Trong Prisma, trường của cột `webhook_events` đặt tên `subscribedEvents` và `@map("webhook_events")`, để tránh trùng tên với bảng `webhook_events` |
+| `clients` | id, name, secret_encrypted (AES-256-GCM), webhook_url, webhook_events, status, provider_config_id | Khóa mã hóa từ env `ENCRYPTION_KEY` (NFR-SEC-02). Trong Prisma, trường của cột `webhook_events` đặt tên `subscribedEvents` và `@map("webhook_events")`, để tránh trùng tên với bảng `webhook_events` |
 | `providers` | code, name, capabilities (JSON), status | Bật/tắt không cần deploy |
 | `provider_configs` | id, provider_code, environment, credentials (mã hóa), status | MVP: VNPay sandbox |
 | `client_providers` | client_id, provider_code, is_enabled | PK (client_id, provider_code) |
@@ -202,7 +202,7 @@ Thay đổi code thuộc auth, payment, callback, webhook, refund hoặc cấu h
 
 ## 9. Quyết định bổ sung 2026-10-21
 
-1. **Lưu thông tin xác thực client:** `api_key_hash` (SHA-256) và `secret_encrypted` (AES-256-GCM, khóa từ env `ENCRYPTION_KEY`), theo SRS mục 5 và NFR-SEC-02. Secret được mã hóa hai chiều vì cần giá trị gốc để verify HMAC request và ký webhook.
+1. **Lưu thông tin xác thực client:** `secret_encrypted` (AES-256-GCM, khóa từ env `ENCRYPTION_KEY`), theo SRS mục 5 và NFR-SEC-02. Secret được mã hóa hai chiều vì cần giá trị gốc để verify HMAC request và ký webhook.
 2. **Payment có 7 trạng thái**: PENDING, SUCCEEDED, FAILED, EXPIRED, CANCELLED, PARTIALLY_REFUNDED, REFUNDED. FAILED/EXPIRED/CANCELLED là trạng thái cuối; PENDING là trạng thái duy nhất đổi được trước thanh toán. Sai lệch số tiền/mã (FR-CB-03) đặt cờ `needs_review`, không phải trạng thái.
 3. **Admin API** `/api/v1/admin/*` xác thực bằng header `X-Admin-Key`, so sánh timing-safe với env `ADMIN_API_KEY` (chỉ cho local/sandbox).
 4. **Thư viện được phép** giới hạn theo danh sách trong [`CLAUDE.md`](../CLAUDE.md). Hệ quả: log JSON tự viết (có mask), retry/timeout/circuit breaker tự viết (thay cho opossum trong NFR-REL-04), không dùng helmet.
@@ -210,11 +210,12 @@ Thay đổi code thuộc auth, payment, callback, webhook, refund hoặc cấu h
 
 User chốt ngày 2026-10-22:
 
-6. **C1 — tối giản:** client gửi `X-Client-Id` + `X-Timestamp` + `X-Signature`; không có header API key riêng. `client_id` đóng vai trò "API key" công khai, secret HMAC là bí mật duy nhất. Hệ quả: cột `api_key_hash` trong SRS mục 5 không cần dùng (xem ghi chú cho Phase 2 — cần user xác nhận bỏ cột hay giữ).
+6. **C1 — tối giản:** client gửi `X-Client-Id` + `X-Timestamp` + `X-Signature`; không có header API key riêng. `client_id` đóng vai trò "API key" công khai, secret HMAC là bí mật duy nhất. Hệ quả: **bỏ cột `api_key_hash`** của SRS mục 5 (user xác nhận 2026-10-22).
 7. **C5 — có:** FR-PM-04 dùng partial unique index `(client_id, order_id) WHERE paid_at IS NOT NULL`, phủ SUCCEEDED, PARTIALLY_REFUNDED, REFUNDED.
 8. **C13:** rate limit phù hợp mô hình một instance dùng chung cho nhiều hệ thống: bộ đếm trong process, key theo `client_id`, giới hạn `RATE_LIMIT_PER_SECOND`; đặt sau interface để chuyển sang Postgres khi scale ngang.
 9. **Thư viện dev TypeScript được phép:** `tsx`, `@types/node`, `@types/express`, `@types/supertest`, `typescript-eslint`, `@eslint/js`, `globals`, `@vitest/coverage-v8`.
 10. **Line ending LF** qua `.gitattributes`.
+11. **Prisma 6.19** (không lên Prisma 7 vì Prisma 7 bắt buộc thêm `@prisma/adapter-pg`, ngoài danh sách thư viện). Thiết kế module: [`codebase-design.md`](codebase-design.md).
 
 Các điểm chốt trong vòng rà soát Phase 1 (không phải câu trả lời của user ngày 2026-10-21): chuỗi ký HMAC (theo `.claude/rules/api-design.md`); `ADMIN_API_KEY` bắt buộc, app fail-fast khi khởi động nếu thiếu hoặc ngắn hơn 32 ký tự (mục 7); trạng thái refund bổ sung (mục 4); tên trường Prisma `subscribedEvents` (mục 6).
 

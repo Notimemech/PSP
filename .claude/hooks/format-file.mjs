@@ -86,7 +86,7 @@ function main() {
   return 0;
 }
 
-let code = 0;
+let code;
 try {
   code = main();
 } catch {

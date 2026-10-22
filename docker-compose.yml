@@ -1,0 +1,50 @@
+# Chạy local: `docker compose up -d postgres` (chỉ DB) hoặc `docker compose up --build` (cả stack).
+# User/password pgs/change_me chỉ dùng cho local, khớp .env.example và tests.
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: pgs
+      POSTGRES_PASSWORD: change_me
+      POSTGRES_DB: pgs
+    ports:
+      # Đổi cổng host nếu máy đã có PostgreSQL khác chiếm 5432 (vd PGS_DB_HOST_PORT=5433).
+      - '${PGS_DB_HOST_PORT:-5432}:5432'
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./docker/postgres:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U pgs -d pgs']
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  api:
+    build: .
+    depends_on:
+      postgres:
+        condition: service_healthy
+    # Biến môi trường lấy từ file env do user tự tạo (sao chép từ .env.example).
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      # Trong mạng compose, DB nằm ở host "postgres" chứ không phải localhost.
+      DATABASE_URL: postgresql://pgs:change_me@postgres:5432/pgs
+      NODE_ENV: production
+    ports:
+      - '3000:3000'
+    healthcheck:
+      test:
+        [
+          'CMD',
+          'node',
+          '-e',
+          "fetch('http://localhost:3000/api/v1/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
+        ]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+volumes:
+  pgdata:

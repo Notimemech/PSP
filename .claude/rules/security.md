@@ -25,7 +25,7 @@ Mục có ghi "(chờ user chốt, xem docs/architecture.md#10-câu-hỏi-mở)"
 ## NFR-SEC-02: Lưu secret
 
 - [ ] Secret client (`secret_encrypted`) và credentials provider mã hóa AES-256-GCM (IV ngẫu nhiên 12 byte mỗi lần, lưu kèm auth tag), khóa từ `ENCRYPTION_KEY` (32 byte).
-- [ ] Không lưu API key riêng (C1); cột `api_key_hash` của SRS mục 5 chờ user xác nhận bỏ hay giữ.
+- [ ] Không lưu API key riêng (C1); không có cột `api_key_hash` (user chốt bỏ, 2026-10-22).
 - [ ] Không có secret/khóa trong source code, seed, test fixture hay migration (`prisma/**`).
 - [ ] Config parse bằng zod khi khởi động; thiếu hoặc sai biến bắt buộc thì dừng app.
 

@@ -106,14 +106,14 @@ Mỗi mục: điều cần kiểm tra → cách kiểm tra (grep/file/request). 
 - Replay: timestamp lệch > 5 phút (cả quá khứ và tương lai) → 401 `INVALID_SIGNATURE`. Kiểm tra `Math.abs`, đơn vị giây/mili-giây, `NaN` (timestamp không phải số phải bị từ chối, `Math.abs(NaN) > 300` là `false`!).
 - Request: ký với `TS=$(( $(date +%s) - 400 ))` → mong đợi 401; ký đúng nhưng đổi 1 byte body → 401; thiếu header → 401; `X-Client-Id` của client bị vô hiệu hóa → 401.
 - Chữ ký có phủ `method + path + timestamp + body` thật không (đổi path `/payments/A` sang `/payments/B` với cùng chữ ký phải fail). Body dùng để verify phải là **raw body** (grep `express.json\(|verify:|rawBody`), không phải `JSON.stringify(req.body)` (khác thứ tự/khoảng trắng → có thể bypass hoặc từ chối nhầm).
-- API key/secret lưu thế nào: `api_key_hash` SHA-256, `secret_encrypted` AES-256-GCM (grep `createCipheriv|aes-256-gcm|getAuthTag|setAuthTag`); IV ngẫu nhiên 12 byte mỗi lần mã hóa (grep `randomBytes\(12\)`), có verify auth tag.
+- Secret lưu thế nào: `secret_encrypted` AES-256-GCM (không có `api_key_hash`, C1) (grep `createCipheriv|aes-256-gcm|getAuthTag|setAuthTag`); IV ngẫu nhiên 12 byte mỗi lần mã hóa (grep `randomBytes\(12\)`), có verify auth tag.
 - Admin: `ADMIN_API_KEY` là **bắt buộc**; app phải fail-fast khi khởi động nếu thiếu hoặc ngắn hơn 32 ký tự (đọc schema env trong `src/config/`). Không được có nhánh "rỗng == rỗng" hay admin API mở khi thiếu khóa. Header sai/thiếu → 401 (mã lỗi admin: chờ chốt, xem Câu hỏi mở C3).
 - C1 đã chốt (tối giản): xác thực = `X-Client-Id` + chữ ký HMAC bằng secret của client; không có header API key riêng. Kiểm tra client bị vô hiệu hóa/không tồn tại → 401, không lộ khác biệt giữa hai trường hợp.
 
 **API3:2023 Broken Object Property Level Authorization** — mass assignment, lộ trường nhạy cảm.
 - Grep: `\.\.\.req\.body|data:\s*req\.body|Object\.assign\(.*req\.body` trong controller/service/repository.
 - Zod schema có `.strict()` hoặc chỉ pick trường cho phép không; client có ghi được `status`, `client_id`, `provider_txn_ref`, `paid_at`, `needs_review` không.
-- Response/webhook có trả `secret_encrypted`, `api_key_hash`, `raw_request`, `raw_response`, credentials provider không (grep `select:|include:` và serializer/DTO).
+- Response/webhook có trả `secret_encrypted`, `raw_request`, `raw_response`, credentials provider không (grep `select:|include:` và serializer/DTO).
 - Request: POST payment với thêm `"status":"SUCCEEDED","client_id":"<B>"` → phải 400 hoặc bị bỏ qua, payment vẫn PENDING, thuộc client A.
 
 **API4:2023 Unrestricted Resource Consumption** — rate limit, kích thước.
