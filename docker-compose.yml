@@ -30,7 +30,8 @@ services:
       - path: .env
         required: false
     environment:
-      # Trong mạng compose, DB nằm ở host "postgres" chứ không phải localhost.
+      # Trong mạng compose, DB nằm ở host "postgres", cổng nội bộ 5432 (KHÔNG phải 5433:
+      # 5433 chỉ là cổng phía máy host, dùng cho localhost).
       DATABASE_URL: postgresql://pgs:change_me@postgres:5432/pgs
       NODE_ENV: production
     ports:
