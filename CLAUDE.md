@@ -42,7 +42,8 @@ docs/                               # srs.md, architecture.md, adr/, security/re
 - Test: `npm test` · Test bảo mật: `npm run test:security`
 - Lint: `npm run lint` · Typecheck: `npm run typecheck` · Format: `npm run format`
 - Migrate: `npx prisma migrate dev` (dev), `npx prisma migrate deploy`, `npx prisma generate`
-- Seed client: `npm run seed:client -- --name <tên>`
+- Seed client: `npm run seed:client -- --name <tên>` · Seed dữ liệu dev: `npm run seed:dev`
+- Sinh curl đã ký HMAC để test tay: `npm run curl -- --client <client_id> [--method --path --data|--file|--cases --ts-offset]`
 - Docker (Postgres ra host ở cổng **5433**, đổi bằng `PGS_DB_HOST_PORT`): `docker compose up -d postgres` (chỉ DB), `docker compose up --build` (cả stack), `docker compose down`
 
 ## Quyết định đã chốt (2026-10-21)
@@ -83,6 +84,7 @@ Chốt trong vòng rà soát Phase 1:
 - `vnp_TxnRef` do PGS sinh, unique toàn hệ thống.
 - Không gọi host VNPay production (`pay.vnpay.vn`, `merchant.vnpay.vn`).
 - Không đọc `.env*` (trừ `.env.example`); không commit secret.
+- **Không tự commit, không push** (user chốt 2026-10-24): chỉ `git commit` khi user yêu cầu rõ trong lượt đó; không bao giờ `git push`. Xong việc thì để thay đổi trong working tree và báo user. Subagent cũng vậy.
 - Hook `.claude/hooks/guard.mjs` chặn mọi lệnh/đường dẫn tham chiếu tới `.env` (trừ `.env.example`) và host `*.vnpay.vn`, kể cả `cp .env.example .env`: user tự tạo `.env`. Bị chặn thì không tìm cách lách, hãy hỏi user.
 
 ## Quy trình bảo mật
@@ -106,7 +108,7 @@ Khi thay đổi code thuộc **auth, payment, callback, webhook, refund hoặc c
 
 ## Mẫu báo cáo cuối việc
 
-Khi xong việc, trả lời theo mẫu:
+Khi xong việc, trả lời theo mẫu: 
 
 ```
 **Đã hoàn thành việc gì?**
@@ -116,4 +118,8 @@ Khi xong việc, trả lời theo mẫu:
 **Sửa những file nào?**
 - `path/to/file.ts`: <thay đổi gì> (liên quan: <việc 1>)
 - `path/to/other.ts`: <thay đổi gì> (liên quan: <việc 2>)
+
+**Việc nên làm tiếp theo?** (trả lời ngắn gọn, nói thẳng vào mục đích, không yapping)
+- <Ưu tiên> <Việc 1> <Tại sao?> 
+- <Ưu tiên> <Việc 2> <Tại sao?>
 ```

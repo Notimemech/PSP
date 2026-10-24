@@ -1,5 +1,5 @@
 // Truy cập bảng clients, client_providers, providers.
-import type { ClientStatus, ProviderStatus } from '@prisma/client';
+import type {ClientStatus, ProviderStatus } from '@prisma/client';
 import type { Db } from './db.js';
 
 export async function findClientStatus(db: Db, clientId: string): Promise<ClientStatus | null> {
@@ -49,5 +49,12 @@ export async function createClientWithProviders(db: Db, c: NewClient): Promise<v
       secretEncrypted: c.secretEncrypted,
       providers: { create: c.providerCodes.map((providerCode) => ({ providerCode, isEnabled: true })) },
     },
+  });
+}
+
+export async function findClientForAuth(db: Db, clientId: string) {
+  return db.client.findUnique({
+    where: { id: clientId },
+    select: { status: true, secretEncrypted: true },
   });
 }

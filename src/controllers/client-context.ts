@@ -5,10 +5,9 @@
 import type { Request } from 'express';
 import { AppError, ErrorCode } from '../lib/errors.js';
 
-const CLIENT_ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
+// const CLIENT_ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
 
 export function getClientId(req: Request): string {
-  const id = req.get('X-Client-Id');
-  if (!id || !CLIENT_ID_RE.test(id)) throw new AppError(ErrorCode.INVALID_SIGNATURE, 'Xác thực thất bại');
-  return id;
+  if (!req.clientId) throw new AppError(ErrorCode.INVALID_SIGNATURE, "Authorize failed!");
+  return req.clientId;
 }

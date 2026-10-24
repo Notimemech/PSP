@@ -9,6 +9,8 @@ import { errorHandler, notFoundHandler } from './middlewares/error-handler.js';
 import type { ProviderRegistry } from './providers/registry.js';
 import { apiV1Router } from './routes/index.js';
 import { createPaymentService } from './services/payment.service.js';
+import { hmacAuth } from './middlewares/hmac-auth.js';
+import { createSecretBox } from './lib/crypto.js';
 
 export interface AppDeps {
   config: Config;
@@ -38,6 +40,13 @@ export function createApp(deps: AppDeps): Express {
     }),
   );
 
+  const auth = hmacAuth({
+    prisma: deps.prisma,
+    secretBox: createSecretBox(deps.config.security.encryptionKey),
+    clock: deps.clock,
+    maxSkewSeconds: deps.config.security.hmacMaxSkewSeconds
+  })
+
   const payments = createPaymentService({
     prisma: deps.prisma,
     providers: deps.providers,
@@ -45,7 +54,7 @@ export function createApp(deps: AppDeps): Express {
     logger: deps.logger,
     defaultTtlSeconds: deps.config.payment.ttlSeconds,
   });
-  app.use('/api/v1', apiV1Router(deps, { payments }));
+  app.use('/api/v1', apiV1Router(deps, { payments }, auth));
 
   app.use(notFoundHandler());
   app.use(errorHandler(deps.logger));

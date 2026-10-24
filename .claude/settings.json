@@ -65,6 +65,7 @@
       "PowerShell(git diff*)",
       "PowerShell(git log*)"
     ],
+    "ask": ["Bash(git commit*)", "PowerShell(git commit*)"],
     "deny": [
       "Read(./.env)",
       "Read(./.env.local)",

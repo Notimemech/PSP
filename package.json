@@ -12,6 +12,8 @@
     "build": "tsc -p tsconfig.build.json",
     "start": "node --env-file-if-exists=.env dist/server.js",
     "seed:client": "node --env-file-if-exists=.env --import tsx src/cli/seed-client.ts",
+    "seed:dev": "node --env-file-if-exists=.env --import tsx src/cli/seed-dev.ts",
+    "curl": "node --env-file-if-exists=.env --import tsx src/cli/gen-curl.ts",
     "test": "vitest run --project main",
     "test:security": "vitest run --project security --passWithNoTests",
     "lint": "eslint .",

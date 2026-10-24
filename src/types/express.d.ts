@@ -7,5 +7,7 @@ declare module 'express-serve-static-core' {
     correlationId: string;
     /** Body thô đúng như nhận được; middleware HMAC ký trên giá trị này, không ký JSON đã parse lại. */
     rawBody?: Buffer;
+
+    clientId?: string;
   }
 }
